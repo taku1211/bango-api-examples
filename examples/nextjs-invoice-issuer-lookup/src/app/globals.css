@@ -1,0 +1,35 @@
+:root {
+  color-scheme: light;
+  background: #ffffff;
+  color: #171717;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scrollbar-gutter: stable;
+  background: #ffffff;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: #ffffff;
+  color: #171717;
+  font-family:
+    var(--font-geist-sans),
+    Arial,
+    Helvetica,
+    sans-serif;
+}
+
+button,
+input {
+  font-family: inherit;
+}

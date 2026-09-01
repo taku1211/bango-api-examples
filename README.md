@@ -10,6 +10,7 @@
 | --- | --- |
 | [nextjs-corporate-number-autofill](./examples/nextjs-corporate-number-autofill) | 法人番号から会社名・住所・インボイス登録状況を自動補完 |
 | [nextjs-company-autocomplete](./examples/nextjs-company-autocomplete) | 会社名から企業候補を検索し、選択した法人情報を自動補完 |
+| [nextjs-invoice-issuer-lookup](./examples/nextjs-invoice-issuer-lookup) | T番号から登録事業者情報とインボイス登録状況を取得 |
 
 ## API Key
 
