@@ -15,7 +15,7 @@ T番号を入力してフォーカスを外すと、Next.js Route Handler 経由
 - 現在有効でない場合は、存在する登録日・取消日・失効日を表示
 - 登録番号が見つからない場合と `valid: false` を別の状態として扱う
 - T番号を変更したら以前の判定結果を即座にクリア
-- `AbortController` を使い、古いリクエスト結果が新しい入力値へ表示されることを防止
+- `AbortController` を使い、古いブラウザリクエストの結果がUIへ反映されることを防止
 - APIキーはブラウザへ露出せず、Next.js Route Handler からのみ利用
 
 ## Tech stack
@@ -257,7 +257,7 @@ function clearValidityCheck() {
 }
 ```
 
-また、進行中のリクエストは `AbortController` でキャンセルします。
+また、ブラウザ側の進行中の `fetch` は `AbortController` で中断します。
 
 これにより、
 
@@ -271,7 +271,9 @@ T番号Bへ変更
 遅れて返ったT番号Aの結果を表示
 ```
 
-という stale response を防ぎます。
+という stale result がUIへ反映されることを防ぎます。
+
+なお、これは主にブラウザ側の stale result 対策です。ブラウザ側で `fetch` を中断しても、すでに Next.js Route Handler 側で処理が始まっている場合、Route Handler から Bango API への上流リクエストまで必ずキャンセルされるとは限りません。
 
 ## Invoice date
 
