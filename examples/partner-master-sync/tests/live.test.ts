@@ -107,8 +107,8 @@ test('live contract posts once, polls the job, downloads 1-based rows, and only 
     companies: ['株式会社架空商事', '架空商事 別支店', '未一致の架空法人'],
   });
   assert.equal(calls[4].url.searchParams.get('format'), 'json');
-  assert.equal(calls[4].url.searchParams.get('offset'), '0');
-  assert.equal(calls[4].url.searchParams.get('limit'), '100');
+  assert.equal(calls[4].url.searchParams.has('offset'), false);
+  assert.equal(calls[4].url.searchParams.has('limit'), false);
   assert.equal(calls[6].url.searchParams.get('date'), '2024-10-01');
   assert.equal(calls[7].url.pathname, '/v1/change-events');
   assert.equal(calls[7].url.searchParams.get('mode'), 'incremental');

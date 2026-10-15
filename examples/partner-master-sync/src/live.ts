@@ -233,9 +233,9 @@ export class LiveBango {
     }
     if (!completed) throw new BangoJobTimeoutError(this.maxPolls);
 
-    // A 3-row input always fits one JSON download page. row_index is 1-based in the
-    // published examples and matcher implementation; offset=0 is download pagination.
-    const download = await this.request(`batch/${encodeURIComponent(jobId)}/download?format=json&offset=0&limit=100`);
+    // A 3-row input fits in the single JSON download supported by this example.
+    // row_index is 1-based in the published examples and matcher implementation.
+    const download = await this.request(`batch/${encodeURIComponent(jobId)}/download?format=json`);
     if (!isObject(download) || !Array.isArray(download.data) || download.has_more !== false) throw new BangoProtocolError();
     const rows = download.data.map((value, index): BatchResultRow => {
       if (!isObject(value) || value.row_index !== index + 1 || typeof value.input_name !== 'string' ||
