@@ -2,7 +2,7 @@ name: Partner master sync
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/issue645-partner-master-offline-example]
     paths:
       - 'examples/partner-master-sync/**'
       - '.github/workflows/partner-master-sync.yml'

@@ -72,7 +72,7 @@ export function signDemo(secret: string, payload: object, nowMillis = Date.now()
   } };
 }
 
-export function createReceiver(db: DatabaseSync, secrets: string | readonly string[]): Server {
+export function createReceiver(db: DatabaseSync, secrets: string | readonly string[], allowedSubjectId?: string): Server {
   // Construct once so an invalid key is reported before the server accepts requests.
   const verifiers = createVerifiers(secrets);
 
@@ -109,6 +109,9 @@ export function createReceiver(db: DatabaseSync, secrets: string | readonly stri
         res.writeHead(200).end(); return;
       }
       if (!validEvent(payload)) { res.writeHead(400).end(); return; }
+      // A valid delivery for another watch in the same organization is acknowledged but kept
+      // out of this verification inbox. The foreign payload remains transient in request memory.
+      if (allowedSubjectId !== undefined && payload.subject.id !== allowedSubjectId) { res.writeHead(200).end(); return; }
       // Acknowledge only after a durable inbox transaction commits.
       transaction(db, () => storeEvent(db, payload));
       res.writeHead(200).end();

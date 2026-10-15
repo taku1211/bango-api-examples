@@ -92,9 +92,10 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 - `src/webhook.ts`: 公式SDKによる検証、HTTP受信、COMMIT後の応答。
 - `src/sync.ts`: モックPullと410からの回復。
 - `src/live.ts` / `src/live-cli.ts`: 公開OpenAPIに沿った実API照会と明示的な起動。
+- `src/verification.ts` / `src/verification-cli.ts`: 単一法人の検証専用ファイルDB・受信・checkpoint/Pull。実行条件は[検証runbook](./VERIFICATION.md)。署名付きHTTPS testは確認済み、通常eventを含むE2E全体は未完了。
 - `tests/`: 署名fixture、HTTP/SQLiteの動作、実APIアダプターのモック契約テスト。
 
-`npm test` は外部APIを呼びません。署名改竄・raw body・鍵rotation・時刻境界・endpoint.test・COMMIT失敗・再送重複・順序逆転・大整数版数・削除・再起動・Pull/410のほか、liveのジョブ遷移とエラーを検証します。型チェックは `npm run typecheck`。専用の[GitHub Actions](../../.github/workflows/partner-master-sync.yml)は、対象ディレクトリまたはworkflowの変更があるmain向けPR（Draftを含む）とmainへのpushで、Node 22/24の `npm ci`・typecheck・test・demoを実行します。Bangoのキーや実APIは使いません。サンプル自体のlint設定はありません。
+`npm test` は外部APIを呼びません。署名改竄・raw body・鍵rotation・時刻境界・endpoint.test・COMMIT失敗・再送重複・順序逆転・大整数版数・削除・再起動・Pull/410のほか、liveのジョブ遷移とエラーを検証します。型チェックは `npm run typecheck`。専用の[GitHub Actions](../../.github/workflows/partner-master-sync.yml)は、対象ディレクトリまたはworkflowの変更があるmain向けPRと元の教材ブランチ向けの検証PR（Draftを含む）、およびmainへのpushで、Node 22/24の `npm ci`・typecheck・test・demoを実行します。Bangoのキーや実APIは使いません。サンプル自体のlint設定はありません。
 
 ### 前回の実行記録（2026-10-15 JST、今回の行対応修正前）
 
@@ -111,13 +112,15 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 
 行対応修正後は、Node 22.23.3 / 24.13.0（ともにnpm 11.15.0）で `npm ci`・typecheck・36/36テスト・demoが成功しました。件数・行番号・送信した名称の対応を検証し、内部表記を独自に正規化せず、正しい重複入力も受け付けます。今回のテストは合成レスポンスで実行し、実Bango APIには接続していません。コミットごとのCI結果は[PR #4](https://github.com/taku1211/bango-api-examples/pull/4)のChecksと実行記録で確認できます。
 
-### 実APIの手動E2E（未実施）
+### 実APIの手動検証（2026-10-15時点）
 
-この手動E2Eは未実施・未検証です。今回、watch/endpointの変更・test・resume、課金、顧客データへのアクセス、外部への投稿は行っていません。既存の実API記録はバッチ名寄せPOST（ジョブ作成・利用枠消費）と読み取り照会・checkpoint取得までで、通常eventの受信やPull同期を証明しません。
+owner承認環境で、固定HEAD `461542f`によるinit、新watch登録、baseline、署名付き`endpoint.test`のHTTP 200を確認しました。通常eventは未観測です。空Pullを1ページ実行し、`eventCount=0`、`inserted=0`、`ignoredCount=0`、`hasMore=false`、`gap=false`、前後inbox件数0を確認しました。checkpoint digestは前後同一で、cursor前進の証拠ではありません。endpoint.testがinboxに保存されないことも確認しました。今回watchはDELETE HTTP 200でstopped、endpointはpause後に削除し、既存active/stopped watch 2件は不変でした。Railwayの元設定復元と専用volume削除も完了し、元の停止状態（running 0）を確認しました。実410は未発生です。全体のE2Eは未完了です。秘密値や組織・watch・receiverの識別情報は掲載していません。
 
-このリポジトリだけではE2Eを完了できません。`live:read` はバッチ名寄せ等とcheckpoint取得を行いますが、cursorを次回用に保存せず、watchやendpointも管理しません。`demo` の受信先はloopback上の一時HTTPサーバーと合成鍵です。実行には、raw bodyの署名検証と永続inboxを備えた、利用者が用意・運用する公開HTTPS受信先、およびcheckpointを保存してincremental Pullとgap回復を行うconsumerが必要です。どちらかが未準備ならそこで停止してください。
+`live:read` はバッチ名寄せ等とcheckpoint取得を行いますが、cursorを次回用に保存せず、watchやendpointも管理しません。`demo` の受信先はloopback上の一時HTTPサーバーと合成鍵です。`verification`は署名検証・永続inbox・checkpoint/Pullを備えますが、実環境での通常event、Pull補完、410回復は未検証です。確認範囲と次の手順は[検証runbook](./VERIFICATION.md)を参照してください。
 
-開始前に、組織ownerが専用の検証組織、対象となる公開法人1社と識別子、受信HTTPS URLとevent type、1回の `endpoint.test`、Pullの利用枠消費、後述の停止・削除対象を明示的に承認してください。組織は自分が管理し、他の利用者や並行操作者がいない状態にします。既存のwatchまたはendpointがある、所有者を確認できない、利用枠が不明、対象が顧客データ、または実データ変更を意図的に起こす必要がある場合は停止します。プラン変更・顧客データの投入・公表データの改変はこの手順に含めません。
+この入口は業務反映を行わず、上の教材デモや下の一連のE2E全体を実証済みにするものではありません。
+
+以下は教材全体のE2E手順で、空の検証組織を前提とします。既存watchを保持したまま受信・Pullだけ検証する場合は、上の検証runbookを使ってください。開始前に、組織ownerが専用の検証組織、対象となる公開法人1社と識別子、受信HTTPS URLとevent type、1回の `endpoint.test`、Pullの利用枠消費、後述の停止・削除対象を明示的に承認してください。組織は自分が管理し、他の利用者や並行操作者がいない状態にします。既存のwatchまたはendpointがある、所有者を確認できない、利用枠が不明、対象が顧客データ、または実データ変更を意図的に起こす必要がある場合は停止します。プラン変更・顧客データの投入・公表データの改変はこの手順に含めません。
 
 1. **名寄せと対象確定:** 必要なら上記の `live:read` で公開会社名を1件だけ照合します。バッチ名寄せはPOSTで利用枠を消費します。結果が `confident` でない場合、または法人番号を公開情報と照合できない場合は停止し、review候補を自動確定しません。1社につき法人番号または対応するT番号のどちらか一つを使い、対象名・選んだ識別子・開始時点のwatch/endpoint状態を記録します。
 2. **checkpointを先に保存:** APIキーで `GET /v1/change-events?mode=incremental&start=now` を実行し、返る `next_cursor` を秘密情報として安全に保存します。これはwatch登録より先です。`start=now` は呼び出し時点の末尾を示すため、後から取得するとその間の変更を飛ばすおそれがあります。Pullは月間APIコールを消費し、history cursorはcheckpointに使えません。
@@ -143,7 +146,7 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 
 ### 制約
 
-SQLiteは単一org・単一consumer・単一プロセスの学習用です。複数ワーカー、負荷試験、高可用性、outbox、外部副作用のexactly-onceは対象外です。公開HTTPSでの `endpoint.test` と通常変更イベントの実配送は未検証です。受信サーバーを公開するCLIやクラウド環境の自動構築も含みません。
+SQLiteは単一org・単一consumer・単一プロセスの学習用です。複数ワーカー、負荷試験、高可用性、outbox、外部副作用のexactly-onceは対象外です。公開HTTPSでの署名付き `endpoint.test` は確認済みですが、通常変更イベントの実配送は未検証です。検証CLIはHTTP受信とローカル永続化を提供しますが、TLS終端やクラウド環境の自動構築は含みません。
 
 実運用のWebhook管理にはowner/adminのDashboard/JWTが必要です。APIキーでは通知先を作成できません。公開HTTPS・時刻同期・秘密管理・監視・DB運用は利用者側で整備し、サンプルをそのまま本番へ配置しないでください。保持期限外の過去履歴を復元できるとは保証しません。
 
