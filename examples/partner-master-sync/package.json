@@ -1,0 +1,10 @@
+{
+  "name": "bango-partner-master-sync-example",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.16.0"},
+  "scripts": {
+    "demo": "node --experimental-strip-types src/cli.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  }
+}

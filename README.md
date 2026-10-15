@@ -12,6 +12,7 @@
 | [nextjs-company-autocomplete](./examples/nextjs-company-autocomplete) | 会社名から企業候補を検索し、選択した法人情報を自動補完 |
 | [nextjs-invoice-issuer-lookup](./examples/nextjs-invoice-issuer-lookup) | T番号から登録事業者情報とインボイス登録状況を取得 |
 | [nextjs-invoice-validity-check](./examples/nextjs-invoice-validity-check) | 請求書登録時にT番号の現在の有効性を自動確認 |
+| [partner-master-sync](./examples/partner-master-sync) | 取引先マスタの名寄せ・変更イベント受信・重複排除・欠落時の再同期をオフラインで学ぶ |
 
 ## API Key
 
