@@ -92,9 +92,10 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 - `src/webhook.ts`: 公式SDKによる検証、HTTP受信、COMMIT後の応答。
 - `src/sync.ts`: モックPullと410からの回復。
 - `src/live.ts` / `src/live-cli.ts`: 公開OpenAPIに沿った実API照会と明示的な起動。
+- `src/verification.ts` / `src/verification-cli.ts`: 単一法人の検証専用ファイルDB・受信・checkpoint/Pull。実行条件は[検証runbook](./VERIFICATION.md)。実HTTPS E2Eは未実施。
 - `tests/`: 署名fixture、HTTP/SQLiteの動作、実APIアダプターのモック契約テスト。
 
-`npm test` は外部APIを呼びません。署名改竄・raw body・鍵rotation・時刻境界・endpoint.test・COMMIT失敗・再送重複・順序逆転・大整数版数・削除・再起動・Pull/410のほか、liveのジョブ遷移とエラーを検証します。型チェックは `npm run typecheck`。専用の[GitHub Actions](../../.github/workflows/partner-master-sync.yml)は、対象ディレクトリまたはworkflowの変更があるmain向けPR（Draftを含む）とmainへのpushで、Node 22/24の `npm ci`・typecheck・test・demoを実行します。Bangoのキーや実APIは使いません。サンプル自体のlint設定はありません。
+`npm test` は外部APIを呼びません。署名改竄・raw body・鍵rotation・時刻境界・endpoint.test・COMMIT失敗・再送重複・順序逆転・大整数版数・削除・再起動・Pull/410のほか、liveのジョブ遷移とエラーを検証します。型チェックは `npm run typecheck`。専用の[GitHub Actions](../../.github/workflows/partner-master-sync.yml)は、対象ディレクトリまたはworkflowの変更があるmain向けPRと元の教材ブランチ向けの検証PR（Draftを含む）、およびmainへのpushで、Node 22/24の `npm ci`・typecheck・test・demoを実行します。Bangoのキーや実APIは使いません。サンプル自体のlint設定はありません。
 
 ### 前回の実行記録（2026-10-15 JST、今回の行対応修正前）
 
@@ -116,6 +117,8 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 この手動E2Eは未実施・未検証です。今回、watch/endpointの変更・test・resume、課金、顧客データへのアクセス、外部への投稿は行っていません。既存の実API記録はバッチ名寄せPOST（ジョブ作成・利用枠消費）と読み取り照会・checkpoint取得までで、通常eventの受信やPull同期を証明しません。
 
 このリポジトリだけではE2Eを完了できません。`live:read` はバッチ名寄せ等とcheckpoint取得を行いますが、cursorを次回用に保存せず、watchやendpointも管理しません。`demo` の受信先はloopback上の一時HTTPサーバーと合成鍵です。実行には、raw bodyの署名検証と永続inboxを備えた、利用者が用意・運用する公開HTTPS受信先、およびcheckpointを保存してincremental Pullとgap回復を行うconsumerが必要です。どちらかが未準備ならそこで停止してください。
+
+検証専用の`verification`コマンドで、既存の受信処理をファイルSQLiteへ接続し、GETのみのcheckpoint保存・baseline・1ページPull・実410時の明示復旧を実行できます。[準備・受入・rollback手順](./VERIFICATION.md)を参照してください。公開HTTPS・永続volume・組織/キーと変更対象のowner承認は別途必要です。この入口は業務反映を行わず、上の教材デモや下の一連のE2E全体を実証済みにするものではありません。
 
 開始前に、組織ownerが専用の検証組織、対象となる公開法人1社と識別子、受信HTTPS URLとevent type、1回の `endpoint.test`、Pullの利用枠消費、後述の停止・削除対象を明示的に承認してください。組織は自分が管理し、他の利用者や並行操作者がいない状態にします。既存のwatchまたはendpointがある、所有者を確認できない、利用枠が不明、対象が顧客データ、または実データ変更を意図的に起こす必要がある場合は停止します。プラン変更・顧客データの投入・公表データの改変はこの手順に含めません。
 
@@ -143,7 +146,7 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 
 ### 制約
 
-SQLiteは単一org・単一consumer・単一プロセスの学習用です。複数ワーカー、負荷試験、高可用性、outbox、外部副作用のexactly-onceは対象外です。公開HTTPSでの `endpoint.test` と通常変更イベントの実配送は未検証です。受信サーバーを公開するCLIやクラウド環境の自動構築も含みません。
+SQLiteは単一org・単一consumer・単一プロセスの学習用です。複数ワーカー、負荷試験、高可用性、outbox、外部副作用のexactly-onceは対象外です。公開HTTPSでの `endpoint.test` と通常変更イベントの実配送は未検証です。検証CLIはHTTP受信とローカル永続化を提供しますが、TLS終端やクラウド環境の自動構築は含みません。
 
 実運用のWebhook管理にはowner/adminのDashboard/JWTが必要です。APIキーでは通知先を作成できません。公開HTTPS・時刻同期・秘密管理・監視・DB運用は利用者側で整備し、サンプルをそのまま本番へ配置しないでください。保持期限外の過去履歴を復元できるとは保証しません。
 
