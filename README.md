@@ -12,10 +12,11 @@
 | [nextjs-company-autocomplete](./examples/nextjs-company-autocomplete) | 会社名から企業候補を検索し、選択した法人情報を自動補完 |
 | [nextjs-invoice-issuer-lookup](./examples/nextjs-invoice-issuer-lookup) | T番号から登録事業者情報とインボイス登録状況を取得 |
 | [nextjs-invoice-validity-check](./examples/nextjs-invoice-validity-check) | 請求書登録時にT番号の現在の有効性を自動確認 |
+| [partner-master-sync](./examples/partner-master-sync) | 取引先マスタ同期のオフライン実演・公式SDKでの署名検証・任意の実API照会（Node.js CLI） |
 
 ## API Key
 
-各サンプルの実行には Bango API の API キーが必要です。
+Next.jsの各サンプルと `partner-master-sync` の任意の `live:read` には Bango API の API キーが必要です。`partner-master-sync` のオフラインデモ・テストはキー不要です。
 
 [Bango API](https://bango-api.jp/)
 

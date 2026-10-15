@@ -1,0 +1,396 @@
+{
+  "source": {
+    "openapi_url": "https://bango-api.jp/openapi.json",
+    "retrieved_at": "2026-10-15",
+    "sha256": "36231c47891c881e3b3149aa645b75729cb4c608705bc49633e386718f90f13a",
+    "note": "Success response shapes and metadata are copied from the cited OpenAPI examples; job IDs, company identifiers/data, and cursor values are synthetic. The 202 acknowledgement and completed job use the separate batch_job response schemas."
+  },
+  "responses": {
+    "batchAccepted": {
+      "data": {
+        "job_id": "job-contract-fixture",
+        "status": "queued"
+      },
+      "links": {
+        "docs": "https://bango-api.jp/docs#batch_match",
+        "self": "https://api.bango-api.jp/v1/batch/match",
+        "status": "https://api.bango-api.jp/v1/batch/job-contract-fixture"
+      },
+      "meta": {
+        "quota": {
+          "api_requests": {
+            "limit": 60000,
+            "remaining": 59987,
+            "unlimited": false
+          },
+          "batch_rows": {
+            "limit": 100000,
+            "remaining": 99000,
+            "unlimited": false
+          }
+        },
+        "rate_limit": {
+          "limit": 6000,
+          "remaining": 599,
+          "reset": "2026-05-14T02:31:00Z",
+          "unlimited": false
+        },
+        "source": {
+          "name": "nta",
+          "updated_at": null
+        }
+      },
+      "object": "batch_job",
+      "schema_version": "2026-08"
+    },
+    "batchStatusCompleted": {
+      "data": {
+        "error": null,
+        "job_id": "job-contract-fixture",
+        "progress": {
+          "done": 3,
+          "total": 3
+        },
+        "status": "completed",
+        "summary": {
+          "confident": 1,
+          "review": 1,
+          "unmatched": 1
+        }
+      },
+      "links": {
+        "docs": "https://bango-api.jp/docs#batch_status",
+        "download": "https://api.bango-api.jp/v1/batch/job-contract-fixture/download",
+        "self": "https://api.bango-api.jp/v1/batch/job-contract-fixture"
+      },
+      "meta": {
+        "quota": {
+          "api_requests": {
+            "limit": 60000,
+            "remaining": 59987,
+            "unlimited": false
+          },
+          "batch_rows": {
+            "limit": 100000,
+            "remaining": 99000,
+            "unlimited": false
+          }
+        },
+        "rate_limit": {
+          "limit": 6000,
+          "remaining": 599,
+          "reset": "2026-05-14T02:31:00Z",
+          "unlimited": false
+        },
+        "source": {
+          "name": "nta",
+          "updated_at": null
+        }
+      },
+      "object": "batch_job",
+      "schema_version": "2026-08"
+    },
+    "batchDownload": {
+      "data": [
+        {
+          "candidate_count": 1,
+          "candidates": [
+            {
+              "corporate_number": "1234567890123",
+              "name": "株式会社架空商事",
+              "name_kana": "カブシキガイシャカクウショウジ",
+              "score": 0.97
+            }
+          ],
+          "confidence": "confident",
+          "input_name": "株式会社架空商事",
+          "matched_corporate_number": "1234567890123",
+          "object": "batch_result_row",
+          "prefecture_code": "13",
+          "row_index": 1,
+          "score": 0.97
+        },
+        {
+          "candidate_count": 2,
+          "candidates": [
+            {
+              "corporate_number": "1234567890123",
+              "name": "株式会社架空商事",
+              "name_kana": "カブシキガイシャカクウショウジ",
+              "score": 0.6
+            },
+            {
+              "corporate_number": "1234567890124",
+              "name": "株式会社架空商事支店",
+              "name_kana": null,
+              "score": 0.55
+            }
+          ],
+          "confidence": "review",
+          "input_name": "架空商事 別支店",
+          "matched_corporate_number": null,
+          "object": "batch_result_row",
+          "prefecture_code": "13",
+          "row_index": 2,
+          "score": 0.6
+        },
+        {
+          "candidate_count": 0,
+          "candidates": [],
+          "confidence": "unmatched",
+          "input_name": "未一致の架空法人",
+          "matched_corporate_number": null,
+          "object": "batch_result_row",
+          "prefecture_code": "13",
+          "row_index": 3,
+          "score": 0
+        }
+      ],
+      "has_more": false,
+      "item": "batch_result_row",
+      "limit": 100,
+      "links": {
+        "docs": "https://bango-api.jp/docs#batch_download",
+        "self": "https://api.bango-api.jp/v1/batch/job-contract-fixture/download"
+      },
+      "meta": {
+        "quota": {
+          "api_requests": {
+            "limit": 60000,
+            "remaining": 59987,
+            "unlimited": false
+          },
+          "batch_rows": {
+            "limit": 100000,
+            "remaining": 99000,
+            "unlimited": false
+          }
+        },
+        "rate_limit": {
+          "limit": 6000,
+          "remaining": 599,
+          "reset": "2026-05-14T02:31:00Z",
+          "unlimited": false
+        },
+        "source": {
+          "name": "nta",
+          "updated_at": null
+        }
+      },
+      "object": "list",
+      "offset": 0,
+      "schema_version": "2026-08"
+    },
+    "company": {
+      "data": {
+        "active": true,
+        "address": {
+          "city": "架空市",
+          "city_code": "00000",
+          "city_en": null,
+          "full": "架空県架空市1-1",
+          "image_id": null,
+          "post_code": "0000000",
+          "prefecture": "架空県",
+          "prefecture_code": "00",
+          "prefecture_en": null,
+          "street": "1-1"
+        },
+        "address_outside": null,
+        "assignment_date": "2020-01-01",
+        "closure": null,
+        "corporate_number": "1234567890123",
+        "invoice": {
+          "cancel_date": null,
+          "country": "domestic",
+          "expire_date": null,
+          "found": true,
+          "registered": true,
+          "registration_date": "2023-10-01",
+          "registration_number": "T1234567890123",
+          "valid": true
+        },
+        "kind": "株式会社",
+        "kind_code": "301",
+        "name": "株式会社架空商事",
+        "name_en": "Synthetic Example Company",
+        "name_image_id": null,
+        "name_kana": "カブシキガイシャカクウショウジ",
+        "revision": {
+          "change_cause": null,
+          "change_date": null,
+          "correct": null,
+          "latest": null,
+          "process": null,
+          "published_date": null,
+          "sequence_number": null
+        },
+        "search_excluded": null,
+        "updated_at": "2024-09-30"
+      },
+      "links": {
+        "docs": "https://bango-api.jp/docs#companies_lookup",
+        "invoice": "https://api.bango-api.jp/v1/invoice/T1234567890123",
+        "self": "https://api.bango-api.jp/v1/companies/1234567890123"
+      },
+      "meta": {
+        "quota": {
+          "api_requests": {
+            "limit": 60000,
+            "remaining": 59987,
+            "unlimited": false
+          },
+          "batch_rows": null
+        },
+        "rate_limit": {
+          "limit": 6000,
+          "remaining": 599,
+          "reset": "2026-05-14T02:31:00Z",
+          "unlimited": false
+        },
+        "source": {
+          "name": "nta",
+          "updated_at": "2024-09-30"
+        }
+      },
+      "object": "company",
+      "schema_version": "2026-08"
+    },
+    "invoiceValidity": {
+      "data": {
+        "cancel_date": null,
+        "date": "2024-10-01",
+        "expire_date": null,
+        "registration_date": "2023-10-01",
+        "registration_number": "T1234567890123",
+        "valid": true
+      },
+      "links": {
+        "docs": "https://bango-api.jp/docs#invoice_valid",
+        "invoice": "https://api.bango-api.jp/v1/invoice/T1234567890123",
+        "self": "https://api.bango-api.jp/v1/invoice/T1234567890123/valid"
+      },
+      "meta": {
+        "quota": {
+          "api_requests": {
+            "limit": 60000,
+            "remaining": 59987,
+            "unlimited": false
+          },
+          "batch_rows": null
+        },
+        "rate_limit": {
+          "limit": 6000,
+          "remaining": 599,
+          "reset": "2026-05-14T02:31:00Z",
+          "unlimited": false
+        },
+        "source": {
+          "name": "nta",
+          "updated_at": "2021-10-28"
+        }
+      },
+      "object": "invoice_validity",
+      "schema_version": "2026-08"
+    },
+    "incrementalStartNow": {
+      "continuity_guaranteed": true,
+      "data": [],
+      "has_more": false,
+      "item": "change_event",
+      "limit": 100,
+      "links": {
+        "docs": "https://bango-api.jp/docs#change_events_list",
+        "next": null,
+        "self": "https://api.bango-api.jp/v1/change-events?mode=incremental&start=now"
+      },
+      "meta": {
+        "quota": {
+          "api_requests": {
+            "limit": 60000,
+            "remaining": 59987,
+            "unlimited": false
+          },
+          "batch_rows": null
+        },
+        "rate_limit": {
+          "limit": 6000,
+          "remaining": 599,
+          "reset": "2026-05-14T02:31:00Z",
+          "unlimited": false
+        },
+        "source": {
+          "name": "nta",
+          "updated_at": null
+        }
+      },
+      "mode": "incremental",
+      "next_after": null,
+      "next_cursor": "synthetic-cursor-fixture",
+      "object": "list",
+      "schema_version": "2026-08"
+    },
+    "changeEventProblems": {
+      "401": {
+        "code": "UNAUTHORIZED",
+        "detail": null,
+        "details": null,
+        "limit_scope": null,
+        "resource_limit": null,
+        "retry_after": null,
+        "retryable": false,
+        "status": 401,
+        "title": "Unauthorized",
+        "type": "https://bango-api.jp/docs/errors#unauthorized"
+      },
+      "403": {
+        "code": "FORBIDDEN",
+        "detail": null,
+        "details": null,
+        "limit_scope": null,
+        "resource_limit": null,
+        "retry_after": null,
+        "retryable": false,
+        "status": 403,
+        "title": "Forbidden",
+        "type": "https://bango-api.jp/docs/errors#forbidden"
+      },
+      "410": {
+        "code": "CHANGE_EVENT_HISTORY_GAP",
+        "detail": null,
+        "details": null,
+        "limit_scope": null,
+        "resource_limit": null,
+        "retry_after": null,
+        "retryable": false,
+        "status": 410,
+        "title": "Change event continuity was lost",
+        "type": "https://bango-api.jp/docs/errors#change_event_history_gap"
+      },
+      "429": {
+        "code": "RATE_LIMIT_EXCEEDED",
+        "detail": null,
+        "details": null,
+        "limit_scope": "rpm",
+        "resource_limit": null,
+        "retry_after": 60,
+        "retryable": true,
+        "status": 429,
+        "title": "Rate limit exceeded",
+        "type": "https://bango-api.jp/docs/errors#rate_limit_exceeded"
+      },
+      "503": {
+        "code": "DEPENDENCY_UNAVAILABLE",
+        "detail": null,
+        "details": null,
+        "limit_scope": null,
+        "resource_limit": null,
+        "retry_after": 30,
+        "retryable": true,
+        "status": 503,
+        "title": "Dependency is unavailable",
+        "type": "https://bango-api.jp/docs/errors#dependency_unavailable"
+      }
+    }
+  }
+}
