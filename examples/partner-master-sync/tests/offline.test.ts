@@ -12,6 +12,7 @@ import { createReceiver, signDemo } from '../src/webhook.ts';
 import { MockBango, DEMO_SECRET, COMPANY_NUMBER, CHANGED, LATEST, changeEvent, SUBJECT_ID } from '../src/mock.ts';
 import { pullAndRecover } from '../src/sync.ts';
 import { replaceUtf8ReplacementCharacterWithInvalidByte } from './fixtures/raw-body-mutations.ts';
+import { currentTestSecret, previousTestSecret } from './fixtures/test-secrets.ts';
 
 function base() {
   const db = openStore();
@@ -27,7 +28,7 @@ const rows = (db: ReturnType<typeof openStore>, sql: string) => db.prepare(sql).
 type FixtureMessage = { body: string; headers: Record<string, string> };
 const webhookFixture = JSON.parse(readFileSync(
   new URL('./fixtures/standardwebhooks.json', import.meta.url), 'utf8',
-)) as { testSecrets: { current: string; previous: string }; messages: Record<string, FixtureMessage> };
+)) as { messages: Record<string, FixtureMessage> };
 
 test('mocked batch is a 202 job flow; ambiguous and unmatched names are not auto-linked', () => {
   const { db, api } = base();
@@ -47,7 +48,7 @@ test('mocked batch is a 202 job flow; ambiguous and unmatched names are not auto
 test('HTTP receiver verifies Bango fixtures, leaves endpoint.test state untouched, and deduplicates retry IDs', async (context) => {
   context.mock.method(Date, 'now', () => 1_792_026_000_000);
   const { db } = base();
-  const srv = createReceiver(db, [webhookFixture.testSecrets.current, webhookFixture.testSecrets.previous]);
+  const srv = createReceiver(db, [currentTestSecret, previousTestSecret]);
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   try {
@@ -75,7 +76,7 @@ test('HTTP receiver verifies Bango fixtures, leaves endpoint.test state untouche
     assert.equal(malformedResponse.status, 401);
     assert.equal(rows(db, 'SELECT * FROM inbox').length, 1);
 
-    const invalid = signDemo(webhookFixture.testSecrets.current, { id: 'evt_invalid_shape', type: 'company.updated', subject: {} });
+    const invalid = signDemo(currentTestSecret, { id: 'evt_invalid_shape', type: 'company.updated', subject: {} });
     assert.equal((await fetch(url, { method: 'POST', headers: invalid.headers, body: invalid.body })).status, 400);
 
     const tampered = webhookFixture.messages.retryAttempt1;
@@ -95,7 +96,7 @@ test('HTTP receiver verifies Bango fixtures, leaves endpoint.test state untouche
 test('receiver classifies a signed malformed JSON body as 400', async (context) => {
   context.mock.method(Date, 'now', () => 1_792_026_000_000);
   const db = openStore();
-  const srv = createReceiver(db, webhookFixture.testSecrets.current);
+  const srv = createReceiver(db, currentTestSecret);
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   try {

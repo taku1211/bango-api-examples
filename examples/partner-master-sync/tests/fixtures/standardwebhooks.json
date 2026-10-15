@@ -12,12 +12,9 @@
       "referenceTimeSeconds": 1792026000,
       "keySelection": "Deterministic 32-byte test-only keys; graceful rotation uses current/new key first, then previous/old key. At expiry the signer emits only current/new.",
       "syntheticOnly": true,
-      "disclaimer": "All payloads, identifiers, company details, and keys are synthetic test data. No customer data, production secret, or private implementation code is included."
+      "disclaimer": "All payloads, identifiers, company details, and keys are synthetic test data. No customer data, production secret, or private implementation code is included.",
+      "testKeyDerivation": "Tests construct previous/current with Buffer.alloc(32, 0x07) and Buffer.alloc(32, 0x09), respectively, then prefix each Base64 value with whsec_; runtime construction keeps encoded credentials out of this fixture."
     }
-  },
-  "testSecrets": {
-    "previous": "whsec_BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
-    "current": "whsec_CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk="
   },
   "messages": {
     "preRotationCurrent": {

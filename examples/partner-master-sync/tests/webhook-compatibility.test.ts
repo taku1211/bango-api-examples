@@ -5,6 +5,7 @@ import { isUtf8 } from 'node:buffer';
 import { InvalidWebhookBodyError, verifyBangoWebhook } from '../src/webhook.ts';
 import { WebhookVerificationError } from 'standardwebhooks';
 import { replaceUtf8ReplacementCharacterWithInvalidByte } from './fixtures/raw-body-mutations.ts';
+import { currentTestSecret as current, previousTestSecret as previous } from './fixtures/test-secrets.ts';
 
 type FixtureMessage = {
   name: string;
@@ -19,14 +20,11 @@ type Fixture = {
     source: { commit: string; signerFileSha256: string };
     generation: { referenceTimeSeconds: number; syntheticOnly: boolean; disclaimer: string };
   };
-  testSecrets: { previous: string; current: string };
   messages: Record<string, FixtureMessage>;
 };
 
-const fixture = JSON.parse(readFileSync(
-  new URL('./fixtures/standardwebhooks.json', import.meta.url), 'utf8',
-)) as Fixture;
-const { current, previous } = fixture.testSecrets;
+const fixtureText = readFileSync(new URL('./fixtures/standardwebhooks.json', import.meta.url), 'utf8');
+const fixture = JSON.parse(fixtureText) as Fixture;
 const { messages } = fixture;
 const freezeFixtureClock = (context: TestContext) => {
   context.mock.method(Date, 'now', () => fixture.metadata.generation.referenceTimeSeconds * 1000);
@@ -41,6 +39,7 @@ test('official SDK verifies synthetic signatures from the Bango signer with exac
   assert.match(fixture.metadata.source.signerFileSha256, /^[a-f0-9]{64}$/);
   assert.equal(fixture.metadata.generation.syntheticOnly, true);
   assert.match(fixture.metadata.generation.disclaimer, /No customer data/);
+  assert.doesNotMatch(fixtureText, /whsec_[A-Za-z0-9+/]{43}/);
 
   assert.equal((verify(previous, messages.preRotationCurrent) as { id: string }).id, 'evt_123e4567-e89b-42d3-a456-426614174001');
   assert.equal((verify([current, previous], messages.gracefulRotationDual) as { id: string }).id, 'evt_123e4567-e89b-42d3-a456-426614174005');
