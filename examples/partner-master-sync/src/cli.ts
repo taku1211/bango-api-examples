@@ -5,7 +5,7 @@ import { MockBango, DEMO_SECRET, COMPANY_NUMBER, CHANGED, changeEvent } from './
 import { pullAndRecover } from './sync.ts';
 
 if (process.argv[2] && process.argv[2] !== 'demo') {
-  throw new Error('This first slice only supports the offline "demo" command. No live API calls are made.');
+  throw new Error('This command supports only the offline "demo". Use the separate live:read command for BANGO API calls.');
 }
 
 const db = openStore();

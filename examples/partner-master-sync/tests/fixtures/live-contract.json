@@ -3,7 +3,7 @@
     "openapi_url": "https://bango-api.jp/openapi.json",
     "retrieved_at": "2026-10-15",
     "sha256": "36231c47891c881e3b3149aa645b75729cb4c608705bc49633e386718f90f13a",
-    "note": "Success response shapes and metadata are copied from the cited OpenAPI examples; job IDs, company identifiers/data, and cursor values are synthetic. batch/match has no published response example, so its 202 envelope follows the documented schema and batch metadata."
+    "note": "Success response shapes and metadata are copied from the cited OpenAPI examples; job IDs, company identifiers/data, and cursor values are synthetic. The 202 acknowledgement and completed job use the separate batch_job response schemas."
   },
   "responses": {
     "batchAccepted": {
