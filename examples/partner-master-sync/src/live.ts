@@ -237,8 +237,11 @@ export class LiveBango {
     // row_index is 1-based in the published examples and matcher implementation.
     const download = await this.request(`batch/${encodeURIComponent(jobId)}/download?format=json`);
     if (!isObject(download) || !Array.isArray(download.data) || download.has_more !== false) throw new BangoProtocolError();
+    if (download.data.length !== names.length) throw new BangoProtocolError();
+    // The API echoes the trimmed submitted label; matching-key normalization is separate.
     const rows = download.data.map((value, index): BatchResultRow => {
       if (!isObject(value) || value.row_index !== index + 1 || typeof value.input_name !== 'string' ||
+          value.input_name !== names[index] ||
           !['confident', 'review', 'unmatched'].includes(String(value.confidence)) ||
           !(value.matched_corporate_number === null || (typeof value.matched_corporate_number === 'string' && /^\d{13}$/.test(value.matched_corporate_number))) ||
           typeof value.candidate_count !== 'number' || !Number.isSafeInteger(value.candidate_count) || value.candidate_count < 0) {
@@ -252,7 +255,6 @@ export class LiveBango {
         candidate_count: value.candidate_count,
       };
     });
-    if (rows.length !== names.length) throw new BangoProtocolError();
     return rows;
   }
 

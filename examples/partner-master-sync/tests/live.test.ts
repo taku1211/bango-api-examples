@@ -49,20 +49,43 @@ function jobStatus(jobId: string, status: 'queued' | 'processing' | 'completed' 
   return response;
 }
 
-function batchDownload(jobId: string, count = 3) {
+function batchDownload(jobId: string, count = 3, names?: string[]) {
   const response = fixture('batchDownload');
   response.data = response.data.slice(0, count);
-  response.data.forEach((row: Record<string, unknown>, index: number) => { row.row_index = index + 1; });
+  response.data.forEach((row: Record<string, unknown>, index: number) => {
+    row.row_index = index + 1;
+    if (names?.[index] !== undefined) row.input_name = names[index];
+  });
   response.limit = 100;
   response.links.self = `https://api.bango-api.jp/v1/batch/${jobId}/download`;
   return response;
 }
 
 function reviewDownload(jobId: string) {
-  const response = batchDownload(jobId, 1);
+  const response = batchDownload(jobId, 1, ['架空商事']);
   response.data[0].confidence = 'review';
   response.data[0].matched_corporate_number = null;
   return response;
+}
+
+async function assertMalformedDownloadRejected(names: string[], download: unknown) {
+  const paths: string[] = [];
+  const fetch = async (input: URL | RequestInfo) => {
+    const url = input instanceof URL ? input : new URL(String(input));
+    paths.push(url.pathname);
+    if (url.pathname === '/v1/batch/match') return jsonResponse(acceptedJob('job-malformed'), 202);
+    if (url.pathname === '/v1/batch/job-malformed') return jsonResponse(jobStatus('job-malformed', 'completed'));
+    if (url.pathname === '/v1/batch/job-malformed/download') return jsonResponse(download);
+    throw new Error(`unexpected URL ${url.pathname}`);
+  };
+  const api = new LiveBango(API_KEY, { fetch, sleep: async () => {} });
+
+  await assert.rejects(api.run(names, '2024-10-01'), BangoProtocolError);
+  assert.deepEqual(paths, [
+    '/v1/batch/match',
+    '/v1/batch/job-malformed',
+    '/v1/batch/job-malformed/download',
+  ]);
 }
 
 test('live contract posts once, polls the job, downloads 1-based rows, and only looks up confident matches', async () => {
@@ -95,6 +118,9 @@ test('live contract posts once, polls the job, downloads 1-based rows, and only 
   assert.equal(api.callsMade, 8);
   assert.equal(Object.hasOwn(result, 'next_cursor'), false);
   assert.deepEqual(result.partners.map(partner => partner.confidence), ['confident', 'review', 'unmatched']);
+  assert.deepEqual(result.partners.map(partner => partner.inputName), [
+    '株式会社架空商事', '架空商事 別支店', '未一致の架空法人',
+  ]);
   assert.equal(result.partners[0].linkedCorporateNumber, COMPANY_NUMBER);
   assert.equal(result.partners[0].invoiceValidity?.date, '2024-10-01');
   assert.equal(result.partners[1].linkedCorporateNumber, null);
@@ -231,22 +257,107 @@ test('RFC 9457 throttling errors expose status, sanitized code, and retry_after 
   assert.equal(api.callsMade, 1);
 });
 
-test('a download row with zero-based or misordered row_index fails closed before company lookup', async () => {
+test('reordered result rows fail closed before company, invoice, or checkpoint reads', async () => {
+  const download = batchDownload('job-malformed');
+  download.data.reverse();
+
+  await assertMalformedDownloadRejected([
+    '株式会社架空商事', '架空商事 別支店', '未一致の架空法人',
+  ], download);
+});
+
+test('zero-based row indices fail closed', async () => {
+  const download = batchDownload('job-malformed', 1, ['架空商事']);
+  download.data[0].row_index = 0;
+
+  await assertMalformedDownloadRejected(['架空商事'], download);
+});
+
+test('correct row indices with swapped input names fail closed', async () => {
+  const names = ['株式会社架空商事', '架空商事 別支店', '未一致の架空法人'];
+  const download = batchDownload('job-malformed', 3, names);
+  [download.data[0].input_name, download.data[1].input_name] = [
+    download.data[1].input_name,
+    download.data[0].input_name,
+  ];
+
+  await assertMalformedDownloadRejected(names, download);
+});
+
+test('a mismatched input name fails closed', async () => {
+  const download = batchDownload('job-malformed', 1, ['別の架空法人']);
+
+  await assertMalformedDownloadRejected(['架空商事'], download);
+});
+
+test('duplicate row indices fail closed even when input names are duplicated', async () => {
+  const names = ['架空商事', '架空商事'];
+  const download = batchDownload('job-malformed', 2, names);
+  download.data[1].row_index = 1;
+
+  await assertMalformedDownloadRejected(names, download);
+});
+
+test('a repeated download row fails closed', async () => {
+  const names = ['架空商事', '架空商事'];
+  const download = batchDownload('job-malformed', 1, names);
+  download.data.push(structuredClone(download.data[0]));
+
+  await assertMalformedDownloadRejected(names, download);
+});
+
+test('missing download rows fail closed', async () => {
+  const names = ['株式会社架空商事', '架空商事 別支店'];
+  const download = batchDownload('job-malformed', 1, names);
+
+  await assertMalformedDownloadRejected(names, download);
+});
+
+test('extra download rows fail closed', async () => {
+  const names = ['株式会社架空商事', '架空商事 別支店'];
+  const download = batchDownload('job-malformed', 3, [
+    ...names, '余分な架空法人',
+  ]);
+
+  await assertMalformedDownloadRejected(names, download);
+});
+
+test('duplicate trimmed input names with internal spelling and spacing are preserved', async () => {
+  const selectedName = '株式会社 髙﨑商事　 支店';
+  const names = [` ${selectedName} `, ` ${selectedName} `];
+  const download = batchDownload('job-duplicates', 2, [selectedName, selectedName]);
+  download.data.forEach((row: Record<string, unknown>) => {
+    row.confidence = 'unmatched';
+    row.matched_corporate_number = null;
+  });
   const paths: string[] = [];
-  const fetch = async (input: URL | RequestInfo) => {
+  let postedCompanies: unknown;
+  const fetch = async (input: URL | RequestInfo, init: RequestInit = {}) => {
     const url = input instanceof URL ? input : new URL(String(input));
     paths.push(url.pathname);
-    if (url.pathname === '/v1/batch/match') return jsonResponse(acceptedJob('job-test'), 202);
-    if (url.pathname === '/v1/batch/job-test') return jsonResponse(jobStatus('job-test', 'completed'));
-    const malformed = batchDownload('job-test', 1);
-    malformed.data[0].row_index = 0;
-    return jsonResponse(malformed);
+    if (url.pathname === '/v1/batch/match') {
+      postedCompanies = JSON.parse(String(init.body)).companies;
+      return jsonResponse(acceptedJob('job-duplicates'), 202);
+    }
+    if (url.pathname === '/v1/batch/job-duplicates') {
+      return jsonResponse(jobStatus('job-duplicates', 'completed'));
+    }
+    if (url.pathname === '/v1/batch/job-duplicates/download') return jsonResponse(download);
+    if (url.pathname === '/v1/change-events') return jsonResponse(fixture('incrementalStartNow'));
+    throw new Error(`unexpected URL ${url.pathname}`);
   };
   const api = new LiveBango(API_KEY, { fetch, sleep: async () => {} });
 
-  await assert.rejects(api.run(['架空商事'], '2024-10-01'), BangoProtocolError);
-  assert.equal(paths.includes(`/v1/companies/${COMPANY_NUMBER}`), false);
-  assert.equal(api.callsMade, 3);
+  const result = await api.run(names, '2024-10-01');
+
+  assert.deepEqual(postedCompanies, [selectedName, selectedName]);
+  assert.deepEqual(result.partners.map(partner => partner.inputName), [selectedName, selectedName]);
+  assert.deepEqual(paths, [
+    '/v1/batch/match',
+    '/v1/batch/job-duplicates',
+    '/v1/batch/job-duplicates/download',
+    '/v1/change-events',
+  ]);
 });
 
 test('CLI accepts positional company names plus a transaction date', () => {
