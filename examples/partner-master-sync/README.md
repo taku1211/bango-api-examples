@@ -112,13 +112,13 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 
 行対応修正後は、Node 22.23.3 / 24.13.0（ともにnpm 11.15.0）で `npm ci`・typecheck・36/36テスト・demoが成功しました。件数・行番号・送信した名称の対応を検証し、内部表記を独自に正規化せず、正しい重複入力も受け付けます。今回のテストは合成レスポンスで実行し、実Bango APIには接続していません。コミットごとのCI結果は[PR #4](https://github.com/taku1211/bango-api-examples/pull/4)のChecksと実行記録で確認できます。
 
-### 実APIの手動E2E（未実施）
+### 実APIの手動検証（2026-10-15時点）
 
-この手動E2Eは未実施・未検証です。今回、watch/endpointの変更・test・resume、課金、顧客データへのアクセス、外部への投稿は行っていません。既存の実API記録はバッチ名寄せPOST（ジョブ作成・利用枠消費）と読み取り照会・checkpoint取得までで、通常eventの受信やPull同期を証明しません。
+owner承認環境で、固定HEAD `461542f`によるinit、新watch登録、baseline、署名付き`endpoint.test`のHTTP 200を確認しました。通常eventは未観測です。空Pullを1ページ実行し、`eventCount=0`、`inserted=0`、`ignoredCount=0`、`hasMore=false`、`gap=false`、前後inbox件数0を確認しました。checkpoint digestは前後同一で、cursor前進の証拠ではありません。endpoint.testがinboxに保存されないことも確認しました。今回watchはDELETE HTTP 200でstopped、endpointはpause後に削除し、既存active/stopped watch 2件は不変でした。Railwayの元設定復元とvolume削除は保留で、実410は未発生です。全体のE2Eは未完了です。秘密値や組織・watch・receiverの識別情報は掲載していません。
 
-このリポジトリだけではE2Eを完了できません。`live:read` はバッチ名寄せ等とcheckpoint取得を行いますが、cursorを次回用に保存せず、watchやendpointも管理しません。`demo` の受信先はloopback上の一時HTTPサーバーと合成鍵です。実行には、raw bodyの署名検証と永続inboxを備えた、利用者が用意・運用する公開HTTPS受信先、およびcheckpointを保存してincremental Pullとgap回復を行うconsumerが必要です。どちらかが未準備ならそこで停止してください。
+`live:read` はバッチ名寄せ等とcheckpoint取得を行いますが、cursorを次回用に保存せず、watchやendpointも管理しません。`demo` の受信先はloopback上の一時HTTPサーバーと合成鍵です。`verification`は署名検証・永続inbox・checkpoint/Pullを備えますが、実環境での通常event、Pull補完、410回復は未検証です。確認範囲と次の手順は[検証runbook](./VERIFICATION.md)を参照してください。
 
-検証専用の`verification`コマンドで、既存の受信処理をファイルSQLiteへ接続し、GETのみのcheckpoint保存・baseline・1ページPull・実410時の明示復旧を実行できます。[準備・受入・rollback手順](./VERIFICATION.md)を参照してください。公開HTTPS・永続volume・組織/キーと変更対象のowner承認は別途必要です。この入口は業務反映を行わず、上の教材デモや下の一連のE2E全体を実証済みにするものではありません。
+この入口は業務反映を行わず、上の教材デモや下の一連のE2E全体を実証済みにするものではありません。
 
 以下は教材全体のE2E手順で、空の検証組織を前提とします。既存watchを保持したまま受信・Pullだけ検証する場合は、上の検証runbookを使ってください。開始前に、組織ownerが専用の検証組織、対象となる公開法人1社と識別子、受信HTTPS URLとevent type、1回の `endpoint.test`、Pullの利用枠消費、後述の停止・削除対象を明示的に承認してください。組織は自分が管理し、他の利用者や並行操作者がいない状態にします。既存のwatchまたはendpointがある、所有者を確認できない、利用枠が不明、対象が顧客データ、または実データ変更を意図的に起こす必要がある場合は停止します。プラン変更・顧客データの投入・公表データの改変はこの手順に含めません。
 

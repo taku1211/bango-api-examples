@@ -1,6 +1,6 @@
 # 検証専用Webhook・Pull runbook
 
-これは公開教材とは別の、単一組織・公開法人1件・単一プロセス用の検証入口です。**実HTTPS配送は未検証**です。ローカルの合成試験、`endpoint.test`、通常変更イベント、実Pull、実410回復を別々に記録します。通常変更や410を人為的に作りません。
+これは公開教材とは別の、単一組織・公開法人1件・単一プロセス用の検証入口です。2026-10-15のowner承認環境では、init、新watch登録、baseline、署名付き`endpoint.test`のHTTP 200を確認しました。通常変更イベントは未観測です。空のPullを1ページ実行し、watchとendpointのcleanupを行いましたが、Pullではcursor前進を実証しておらず、Railwayの設定復元・volume削除は保留です。実410回復も未観測のため、全体のE2Eは未完了です。通常変更や410を人為的に作りません。
 
 `src/verification-cli.ts` は既存の署名検証・SQLite inboxを再利用し、checkpointをファイルに保存します。外部API操作はGETだけです。watch登録・停止、endpoint管理、鍵発行、名寄せPOST、顧客DB更新、クラウド構築は実装していません。受信とPullはinbox保存までで、業務反映workerは起動しません。
 
@@ -31,7 +31,7 @@ npm run typecheck
 npm test
 ```
 
-新しい空の状態保存先を選びます。教材のDB、他の組織のDB、本番DBと共有しません。以下の値は非秘密の例です。実行時は承認済みの値へ置き換えます。
+新しい空の状態保存先を選びます。以前のDraft `345f50d`で作成したDBは、新コードで再開しません。2026-10-15の実施は固定HEAD `461542f`で行いました。次回はowner承認済みの新しい固定HEADと新しい空DBを選び、initから各段階のstatus・serve・Pullまで同じHEADと保存先を使います。`461542f`を次回も使う指定ではありません。旧DBの移行や互換性を推測せず、教材のDB、他組織のDB、本番DBと共有しません。以下の値は非秘密の例です。実行時は承認済みの値へ置き換えます。
 
 ```sh
 export BANGO_VERIFICATION_DIR=/absolute/private/path/verification-645
@@ -43,7 +43,9 @@ export BANGO_PUBLIC_CORPORATE_NUMBER=owner-confirmed-13-digit-number
 
 組織IDはownerの申告を状態と結びつけるラベルです。APIキーの所属組織をこのラベルだけで証明できません。事前にDashboardの選択組織とキーの所属を確認してください。APIキーの切り替えや別組織の状態再利用はしません。
 
-CLIは専用保存先を排他利用します。`serve`中に別のCLIで同じ状態へ書き込まず、正常終了してから次のコマンドへ進みます。状態は`verification.sqlite`、lockは`.verification.lock`です。異常終了でlockが残った場合は、該当プロセスが停止したことをownerが確認し、DBのバックアップ後にlockだけを除去します。生存中のプロセスのlockを削除しません。
+CLIは専用保存先を排他利用します。`serve`中に別のCLIで同じ状態へ書き込まず、正常終了してから次のコマンドへ進みます。状態は`verification.sqlite`、lockは`.verification.lock`です。異常終了でlockが残った場合は、旧deployment全体を停止し、DB/volumeを使う他のprocessやcontainerがないことをownerが確認してから、DBをバックアップしてlockだけを除去します。lock内のPIDだけで別containerのprocessかどうかを決めつけません。稼働中deploymentや他processが使うDBのlockは削除しません。
+
+今回、npm run経由の`serve`停止後にlockファイルが残りました。旧deploymentが完全に削除・offlineで、ほかに稼働中processがないことを外部確認した後、操作者が既知のPID 25のlockだけを除去しました。直接Nodeを起動した場合のgraceful shutdownはliveで未再検証です。
 
 ## 承認後の実行順序
 
@@ -103,23 +105,23 @@ npm run verification -- pull --confirm
 
 状態をrollbackする場合、受信停止・DB接続終了後に保存ディレクトリ全体を保護領域へバックアップします。SQLiteの稼働中の本体ファイルだけをコピーしません。復元は**同じ組織・同じ法人**に限り、古いcheckpointからの再取得と重複排除を前提にします。旧checkpointが失効していれば410手順へ戻ります。秘密値やDBそのものをPR/Issueへ添付しません。
 
-## 既存クラウドへの配置案（未実行）
+## 既存クラウドでの運用
 
 既存の検証用Nodeサービスが使える場合だけ、そのserviceの用途と所有者を再確認します。署名確認だけのsmokeサービスにvolumeがない場合、コンテナの一時ディスクをdurableと呼びません。新DBサービスを増やさず、承認された専用volumeとSQLiteを候補にします。
 
 | 設定 | 準備値 |
 | --- | --- |
-| source | ownerが承認したこのPRの固定HEAD（公開教材PRと別）。自動更新を避ける |
+| source | 次回実施時にownerが承認する固定HEAD（公開教材PRと別）。全段階で同じHEADを使い、自動更新を避ける。今回の実施HEADは`461542f` |
 | root / build | `examples/partner-master-sync` / `npm ci --include=dev` |
 | Node | 検証済み22または24。CIと同じmajor |
-| storage | 新規検証専用volume `/data`、状態保存先 `/data/verification-645`。既存volumeは共有しない |
+| storage | 新規検証専用volume `/data`、ownerが指定する新しい空の状態保存先。以前のDraft用DBは再利用せず、既存volumeは共有しない |
 | replica / restart | 1 / NEVER。自動loopやcronなし |
 | network | 既存owner管理HTTPS domain、port 3000、path `/webhooks/demo`。本番Vercelのroute変更は不要 |
 | shutdown | drain猶予20秒以上。受信window上限とownerの停止時刻を別に設定 |
 | healthcheck | 既存`/health`を無効化する案を承認対象に含める（このCLIには未実装） |
 | runtime env | 上のorg・法人・保存先、`HOST=0.0.0.0`、`PORT=3000`、承認済み2種類の秘密値 |
 
-Railwayではvolumeはruntimeのみでmountされます。build/pre-deployで初期化しません。短いコマンドも**専用serviceのStart Commandを設定してdeployする**ことで実行し、全段階で同じvolume・env・固定HEADを維持します。ローカルの`railway run`はそのvolumeを共有しないため使いません。[Railway volumes](https://docs.railway.com/volumes)
+Railwayではvolumeはruntimeのみでmountされます。build/pre-deployで初期化しません。今回のnpm run経由のStart Commandでは、停止時にnpmのSIGTERMログは出ましたが、受信processの正常終了記録はなくlockが残りました。子processへのsignal伝達が原因かは未確定です。RailwayのStart Commandはnpm runを経由せず、`node --experimental-strip-types src/verification-cli.ts <command> [--confirm]`を直接実行します。`status`には`--confirm`は不要です。直接Nodeを起動した場合のgraceful shutdownはliveで未再検証です。各段階で同じvolume・env・owner承認済み固定HEADを維持します。ローカルの`railway run`はそのvolumeを共有しないため使いません。[Railway volumes](https://docs.railway.com/volumes)
 
 承認後に操作者がRailway Dashboardの対象service/environmentでStart Commandを変更し、差分が今回の対象だけであることを確認してDeployします。MCPを使う場合は`update_service`に対象のproject/service/environment ID、`staged: true`、次表の`startCommand`だけを渡し、`get_staged_changes`を確認してから承認済みの`accept_deploy`を実行します。`accept_deploy`はenvironmentの全staged変更を含むため、無関係の差分があれば適用しません。source/root/volume/secretの初回変更も別の承認対象です。
 
@@ -127,31 +129,32 @@ Railwayではvolumeはruntimeのみでmountされます。build/pre-deployで初
 
 | 段階 | runtime Start Command | 次へ進む条件 |
 | --- | --- | --- |
-| checkpoint | `npm run verification -- init --confirm` | exit0、initialized/checkpointPresent=true。ここでownerがwatchを登録 |
-| baseline | `npm run verification -- baseline --confirm` | exit0、対象subjectId/subjectVersion一致、checkpointPresent=true。endpointを作成して鍵を供給 |
-| HTTPS受信 | `npm run verification -- serve --confirm` | listening=true後にownerがtest。通常event観測。期限前にpause/drain。正常停止 |
-| 受信証拠 | `npm run verification -- status` | exit0、Pull前のinbox IDを保存。秘密値なし |
-| Pull | `npm run verification -- pull --confirm` | exit0とeventCount/inserted/hasMore。必要時のみ上限内で同じ段階を反復 |
-| 終了証拠 | `npm run verification -- status` | exit0、Pull後のinbox ID・checkpointPresentを保存 |
-| 実410のみ | `npm run verification -- recover --confirm` | exit0後にPullへ。失敗なら旧checkpointのまま停止 |
+| checkpoint | `node --experimental-strip-types src/verification-cli.ts init --confirm` | exit0、initialized/checkpointPresent=true。ここでownerがwatchを登録 |
+| baseline | `node --experimental-strip-types src/verification-cli.ts baseline --confirm` | exit0、対象subjectId/subjectVersion一致、checkpointPresent=true。endpointを作成して鍵を供給 |
+| HTTPS受信 | `node --experimental-strip-types src/verification-cli.ts serve --confirm` | listening=true後にownerがtest。通常event観測。期限前にpause/drain。正常停止 |
+| 受信証拠 | `node --experimental-strip-types src/verification-cli.ts status` | exit0、Pull前のinbox IDを保存。秘密値なし |
+| Pull | `node --experimental-strip-types src/verification-cli.ts pull --confirm` | exit0とeventCount/inserted/ignoredCount/hasMore。必要時のみ上限内で同じ段階を反復 |
+| 終了証拠 | `node --experimental-strip-types src/verification-cli.ts status` | exit0、Pull後のinbox ID・checkpointPresentを保存 |
+| 実410のみ | `node --experimental-strip-types src/verification-cli.ts recover --confirm` | exit0後にPullへ。失敗なら旧checkpointのまま停止 |
 
-各短期コマンドが終了するとサービスのHTTPは停止します。これは予定した段階動作であり、継続稼働のhealthcheckを付けません。restart NEVERで`init`やPullを自動再実行させず、各段階の終了コード・出力・HEADを確認してから次へ進みます。これは配置準備案で、deployや課金を実行した記録ではありません。
+各短期コマンドが終了するとサービスのHTTPは停止します。これは予定した段階動作であり、継続稼働のhealthcheckを付けません。restart NEVERで`init`やPullを自動再実行させず、各段階の終了コード・出力・HEADを確認してから次へ進みます。2026-10-15時点でlive確認したのはinit、新watch、baseline、署名付き`endpoint.test`のHTTP 200、空Pull 1ページ、watch/endpoint cleanupです。通常eventは未観測、Railway設定復元とvolume削除はRailwayの本人認証待ち、実410も未発生です。
 
 1サービス・1volumeの短時間検証を提案しますが、料金ゼロや支出上限の自動保証はありません。ownerが金額・時間・保存期限を指定するまでは作成・再deploy・既存secret変更を行いません。旧smokeの署名鍵を取得して再利用しません。
 
 ## 受入表と後始末
 
-| 項目 | 記録する証拠 | liveの初期状態 |
+| 項目 | 記録する証拠 | 2026-10-15時点のlive結果 |
 | --- | --- | --- |
-| 組織・対象・残枠 | owner実行票、watch/endpoint事前一覧、対象法人1件 | 未確定 |
-| checkpoint先行 | init成功時刻 < watch作成時刻、再起動後checkpointPresent | 未検証 |
-| baseline | 既存watch集合が不変、今回watch/subject/version、再起動後の状態 | 未検証 |
-| HTTPS test | test結果、HTTP200、通常inbox増加0 | 未検証 |
+| 組織・対象・残枠 | owner実行票、watch/endpoint事前一覧、対象法人1件 | owner承認済み。既存watchのない公開法人1件とFree枠を確認 |
+| checkpoint先行 | init成功時刻 < watch作成時刻、再起動後checkpointPresent | 2026-10-15 owner承認環境で確認済み |
+| baseline | 既存watch集合が不変、今回watch/subject/version、再起動後の状態 | 2026-10-15 owner承認環境で確認済み |
+| HTTPS test | 署名付きtest結果、HTTP200、通常inbox増加0 | 2026-10-15 owner承認環境で確認済み |
 | 通常配送 | 同eventのsender成功、Pull前のinbox ID、再起動後の保持 | 未観測 |
-| Pull | page件数、inserted件数、同IDの重複排除、checkpoint保存 | 未検証 |
+| Pull | `eventCount`/`inserted`/`ignoredCount`/`hasMore`/`gap`、前後inbox件数、checkpoint digest | 空page 1回: 0/0/0/false/false、inbox前後0、digest同一。cursor前進の証拠ではない |
 | 欠落補完 | Webhookで未受信だった実eventがPullで追加された証拠 | 未検証 |
 | 410回復 | 自然発生410、復旧前後時刻、baselineとcheckpointのatomic確定 | 未発生・未検証 |
-| cleanup | 今回の所有対象照合、停止、in-flight、稼働/費用確認 | 未実施 |
+| watch/endpoint cleanup | 新watchのDELETE応答、endpoint pause/delete、既存watchが不変 | 完了。今回watchはHTTP 200でstopped、endpointはpause後に削除、既存active+stoppedの2 watchは不変 |
+| Railway cleanup | 元のservice設定復元、volume削除、稼働/費用確認 | receiver停止済み。設定復元・volume削除はRailwayの本人認証待ち |
 
 証拠はJST/UTC・検証HEAD・Node版・コマンド（秘密値なし）・終了コード・HTTP status・件数・ID/version・証拠digestに限定します。payload、署名、cursor、APIキー、secret、秘密の受信URLは含めません。
 
