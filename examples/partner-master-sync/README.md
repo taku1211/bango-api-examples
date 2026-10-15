@@ -92,7 +92,7 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 - `src/webhook.ts`: 公式SDKによる検証、HTTP受信、COMMIT後の応答。
 - `src/sync.ts`: モックPullと410からの回復。
 - `src/live.ts` / `src/live-cli.ts`: 公開OpenAPIに沿った実API照会と明示的な起動。
-- `src/verification.ts` / `src/verification-cli.ts`: 単一法人の検証専用ファイルDB・受信・checkpoint/Pull。実行条件は[検証runbook](./VERIFICATION.md)。実HTTPS E2Eは未実施。
+- `src/verification.ts` / `src/verification-cli.ts`: 単一法人の検証専用ファイルDB・受信・checkpoint/Pull。実行条件は[検証runbook](./VERIFICATION.md)。署名付きHTTPS testは確認済み、通常eventを含むE2E全体は未完了。
 - `tests/`: 署名fixture、HTTP/SQLiteの動作、実APIアダプターのモック契約テスト。
 
 `npm test` は外部APIを呼びません。署名改竄・raw body・鍵rotation・時刻境界・endpoint.test・COMMIT失敗・再送重複・順序逆転・大整数版数・削除・再起動・Pull/410のほか、liveのジョブ遷移とエラーを検証します。型チェックは `npm run typecheck`。専用の[GitHub Actions](../../.github/workflows/partner-master-sync.yml)は、対象ディレクトリまたはworkflowの変更があるmain向けPRと元の教材ブランチ向けの検証PR（Draftを含む）、およびmainへのpushで、Node 22/24の `npm ci`・typecheck・test・demoを実行します。Bangoのキーや実APIは使いません。サンプル自体のlint設定はありません。

@@ -59,7 +59,7 @@ CLIは専用保存先を排他利用します。`serve`中に別のCLIで同じ�
    npm run verification -- status
    ```
 
-3. **承認したwatch 1件を登録。** owner/adminが正規APIで法人番号をPUTします。201と作成ID・subject IDを秘密を除いて記録します。200、timeout、同時操作があった場合は、この実行の新規作成と決めず停止して所有権を照合します。再PUTや自動cleanupはしません。
+3. **承認したwatch 1件を登録。** owner/adminが正規APIで法人番号をPUTします。HTTP status（成功時200）と返却されたwatch ID・subject ID・開始時刻を秘密を除いて記録します。200だけでは新規作成を証明できないため、事前未登録の記録と返却ID・開始時刻を照合してから次へ進みます。timeout、同時操作、所有権不明の場合は停止し、再PUTや自動cleanupはしません。
 4. **baselineを保存。** 全状態の一覧が「保存した既存watch集合のまま＋今回のactive対象1件」であることと、GET baselineのwatch/subject対応を検査します。2 GETです。既存watchの停止・削除・再開、別の追加、対象subjectの衝突があれば停止します。今回のwatch IDも固定し、同じ法人の別watch periodへ自動で乗り換えません。
 
    ```sh
