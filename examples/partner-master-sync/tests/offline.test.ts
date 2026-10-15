@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   openStore, addPartner, acceptBatch, getCheckpoint, setCheckpoint, applyBaseline,
   applySnapshot, storeEvent, processInbox, storePullPage, currentState, transaction,
 } from '../src/core.ts';
-import { createReceiver, signDemo, verifySignature } from '../src/webhook.ts';
+import { createReceiver, signDemo } from '../src/webhook.ts';
 import { MockBango, DEMO_SECRET, COMPANY_NUMBER, CHANGED, LATEST, changeEvent, SUBJECT_ID } from '../src/mock.ts';
 import { pullAndRecover } from '../src/sync.ts';
 
@@ -23,6 +23,10 @@ function base() {
   return { db, api };
 }
 const rows = (db: ReturnType<typeof openStore>, sql: string) => db.prepare(sql).all() as Record<string, unknown>[];
+type FixtureMessage = { body: string; headers: Record<string, string> };
+const webhookFixture = JSON.parse(readFileSync(
+  new URL('./fixtures/standardwebhooks.json', import.meta.url), 'utf8',
+)) as { testSecrets: { current: string; previous: string }; messages: Record<string, FixtureMessage> };
 
 test('mocked batch is a 202 job flow; ambiguous and unmatched names are not auto-linked', () => {
   const { db, api } = base();
@@ -39,41 +43,58 @@ test('mocked batch is a 202 job flow; ambiguous and unmatched names are not auto
   } finally { db.close(); }
 });
 
-test('Standard Webhooks-shaped HMAC verifies exact raw bytes and timestamp bounds', () => {
-  const message = { id: 'whtest_test', type: 'endpoint.test' };
-  const now = 1792026000000;
-  const signed = signDemo(DEMO_SECRET, message, now);
-  assert.equal(verifySignature(DEMO_SECRET, signed.body, signed.headers, now), true);
-  assert.equal(verifySignature(DEMO_SECRET, signed.body, signed.headers, now + 301000), false);
-  assert.equal(verifySignature(DEMO_SECRET, Buffer.from(JSON.stringify({ ...message, extra: 'tampered' })), signed.headers, now), false);
-  assert.equal(verifySignature(DEMO_SECRET, signed.body, { ...signed.headers, 'webhook-signature': 'v1,broken' }, now), false);
-});
-
-test('HTTP receiver verifies test, accepts event once, rejects tampering and stores before 200', async () => {
+test('HTTP receiver verifies Bango fixtures, leaves endpoint.test state untouched, and deduplicates retry IDs', async (context) => {
+  context.mock.method(Date, 'now', () => 1_792_026_000_000);
   const { db } = base();
-  const srv = createReceiver(db, DEMO_SECRET);
+  const srv = createReceiver(db, [webhookFixture.testSecrets.current, webhookFixture.testSecrets.previous]);
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   try {
     const bound = srv.address();
     if (!bound || typeof bound === 'string') throw new Error('bind failed');
     const url = `http://127.0.0.1:${bound.port}/webhooks/demo`;
-    const send = (body: object) => {
-      const signed = signDemo(DEMO_SECRET, body);
-      return fetch(url, { method: 'POST', headers: signed.headers, body: signed.body });
-    };
-    assert.equal((await send({ id: 'whtest_1', type: 'endpoint.test' })).status, 200);
-    assert.equal(rows(db, 'SELECT * FROM inbox').length, 0);
-    const event = changeEvent('evt_1', '2', CHANGED);
-    assert.equal((await send(event)).status, 200);
-    assert.equal((await send(event)).status, 200);
+    const sendFixture = (message: FixtureMessage) => fetch(url, {
+      method: 'POST', headers: message.headers, body: message.body,
+    });
+    const beforeTest = currentState(db);
+    assert.equal((await sendFixture(webhookFixture.messages.endpointTestCurrentOnly)).status, 200);
+    assert.deepEqual(currentState(db), beforeTest);
+    assert.equal((await sendFixture(webhookFixture.messages.retryAttempt1)).status, 200);
+    assert.equal((await sendFixture(webhookFixture.messages.retryAttempt2)).status, 200);
     assert.equal(rows(db, 'SELECT * FROM inbox').length, 1);
-    assert.equal((await send({ ...event, id: 'evt_2', subject: {} })).status, 400);
-    const payload = signDemo(DEMO_SECRET, event);
-    assert.equal((await fetch(url, { method: 'POST', headers: payload.headers,
-      body: Buffer.from(JSON.stringify({ ...event, id: 'evt_modified' })) })).status, 401);
-    assert.deepEqual(processInbox(db), { applied: 1, stale: 0, unsupported: 0 });
-    assert.equal(rows(db, 'SELECT version FROM subjects')[0].version, '2');
+
+    const invalid = signDemo(webhookFixture.testSecrets.current, { id: 'evt_invalid_shape', type: 'company.updated', subject: {} });
+    assert.equal((await fetch(url, { method: 'POST', headers: invalid.headers, body: invalid.body })).status, 400);
+
+    const tampered = webhookFixture.messages.retryAttempt1;
+    assert.equal((await fetch(url, { method: 'POST', headers: tampered.headers,
+      body: tampered.body.replace('架空市', '改竄市') })).status, 401);
+    assert.equal((await sendFixture(webhookFixture.messages.signedIdMismatch)).status, 400);
+    assert.equal(rows(db, 'SELECT * FROM inbox').length, 1);
+
+    const received = processInbox(db);
+    assert.deepEqual(received, { applied: 1, stale: 0, unsupported: 0 });
+    assert.equal(rows(db, "SELECT version FROM subjects WHERE subject_id='sub_123e4567-e89b-42d3-a456-426614174000'")[0].version, '3');
+  } finally {
+    srv.close(); await once(srv, 'close'); db.close();
+  }
+});
+
+test('receiver classifies a signed malformed JSON body as 400', async (context) => {
+  context.mock.method(Date, 'now', () => 1_792_026_000_000);
+  const db = openStore();
+  const srv = createReceiver(db, webhookFixture.testSecrets.current);
+  srv.listen(0, '127.0.0.1');
+  await once(srv, 'listening');
+  try {
+    const bound = srv.address();
+    if (!bound || typeof bound === 'string') throw new Error('bind failed');
+    const message = webhookFixture.messages.signedInvalidJson;
+    const res = await fetch(`http://127.0.0.1:${bound.port}/webhooks/demo`, {
+      method: 'POST', headers: message.headers, body: message.body,
+    });
+    assert.equal(res.status, 400);
+    assert.equal(rows(db, 'SELECT * FROM inbox').length, 0);
   } finally {
     srv.close(); await once(srv, 'close'); db.close();
   }
@@ -151,21 +172,32 @@ test('inbox survives closing and re-opening a file-backed SQLite database', () =
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('receiver does not acknowledge if inbox database cannot commit', async () => {
+test('receiver returns 500 and rolls back inbox when a real deferred constraint fails at COMMIT', async () => {
   const db = openStore();
   const srv = createReceiver(db, DEMO_SECRET);
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE commit_guard_parent (id INTEGER PRIMARY KEY);
+    CREATE TABLE commit_guard_child (
+      parent_id INTEGER NOT NULL REFERENCES commit_guard_parent(id) DEFERRABLE INITIALLY DEFERRED
+    );
+    CREATE TRIGGER force_commit_failure AFTER INSERT ON inbox BEGIN
+      INSERT INTO commit_guard_child (parent_id) VALUES (999);
+    END;
+  `);
   srv.listen(0, '127.0.0.1');
   await once(srv, 'listening');
   try {
     const bound = srv.address();
     if (!bound || typeof bound === 'string') throw new Error('bind failed');
-    db.close();
     const msg = signDemo(DEMO_SECRET, changeEvent('evt_no_commit', '2', CHANGED));
     const res = await fetch(`http://127.0.0.1:${bound.port}/webhooks/demo`, {
       method: 'POST', headers: msg.headers, body: msg.body,
     });
     assert.equal(res.status, 500);
-  } finally { srv.close(); await once(srv, 'close'); }
+    assert.equal(rows(db, 'SELECT * FROM inbox').length, 0);
+    assert.equal(rows(db, 'SELECT * FROM commit_guard_child').length, 0);
+  } finally { srv.close(); await once(srv, 'close'); db.close(); }
 });
 
 
