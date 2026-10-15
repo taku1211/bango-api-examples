@@ -167,3 +167,16 @@ test('receiver does not acknowledge if inbox database cannot commit', async () =
     assert.equal(res.status, 500);
   } finally { srv.close(); await once(srv, 'close'); }
 });
+
+
+test('event without corporate_number still updates an already linked subject', () => {
+  const { db } = base();
+  try {
+    const evt = changeEvent('evt_without_company_no', '7', CHANGED);
+    delete evt.subject.corporate_number;
+    storeEvent(db, evt);
+    assert.deepEqual(processInbox(db), { applied: 1, stale: 0, unsupported: 0 });
+    const p = rows(db, "SELECT subject_version FROM partners WHERE local_id='partner-1'")[0];
+    assert.equal(p.subject_version, '7');
+  } finally { db.close(); }
+});
