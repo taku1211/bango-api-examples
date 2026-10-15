@@ -158,4 +158,4 @@ Railwayではvolumeはruntimeのみでmountされます。build/pre-deployで初
 
 証拠はJST/UTC・検証HEAD・Node版・コマンド（秘密値なし）・終了コード・HTTP status・件数・ID/version・証拠digestに限定します。payload、署名、cursor、APIキー、secret、秘密の受信URLは含めません。
 
-終了時は、今回新規作成したことが事前記録・201/ID・owner確認で確定したwatchだけ停止し、endpointをpause/削除します。停止済み/既存/所有不明の資産は変更しません。APIキーの失効、署名鍵削除、volume削除はそれぞれownerが証拠保存と利用終了を確認した後の承認範囲だけです。サービスを検証前のsource/start/health/restart設定と稼働状態へ戻し、誤って旧smokeを再開しません。保存volumeは停止だけでは課金が止まるとは限らないため、保持期限と削除承認を実行票へ残します。
+終了時は、今回新規作成したことが事前一覧・PUT応答のID/開始時刻・owner確認で確定したwatchだけ停止し、endpointをpause/削除します。停止済み/既存/所有不明の資産は変更しません。APIキーの失効、署名鍵削除、volume削除はそれぞれownerが証拠保存と利用終了を確認した後の承認範囲だけです。サービスを検証前のsource/start/health/restart設定と稼働状態へ戻し、誤って旧smokeを再開しません。保存volumeは停止だけでは課金が止まるとは限らないため、保持期限と削除承認を実行票へ残します。
