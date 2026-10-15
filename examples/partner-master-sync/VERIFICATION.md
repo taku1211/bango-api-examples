@@ -1,6 +1,6 @@
 # 検証専用Webhook・Pull runbook
 
-これは公開教材とは別の、単一組織・公開法人1件・単一プロセス用の検証入口です。2026-10-15のowner承認環境では、init、新watch登録、baseline、署名付き`endpoint.test`のHTTP 200を確認しました。通常変更イベントは未観測です。空のPullを1ページ実行し、watchとendpointのcleanupを行いましたが、Pullではcursor前進を実証しておらず、Railwayの設定復元・volume削除は保留です。実410回復も未観測のため、全体のE2Eは未完了です。通常変更や410を人為的に作りません。
+これは公開教材とは別の、単一組織・公開法人1件・単一プロセス用の検証入口です。2026-10-15のowner承認環境では、init、新watch登録、baseline、署名付き`endpoint.test`のHTTP 200を確認しました。通常変更イベントは未観測です。空のPullを1ページ実行し、watchとendpointのcleanupを行いましたが、Pullではcursor前進を実証しておらず、Railwayの元設定復元・専用volume削除・停止状態（running 0）も確認しました。実410回復も未観測のため、全体のE2Eは未完了です。通常変更や410を人為的に作りません。
 
 `src/verification-cli.ts` は既存の署名検証・SQLite inboxを再利用し、checkpointをファイルに保存します。外部API操作はGETだけです。watch登録・停止、endpoint管理、鍵発行、名寄せPOST、顧客DB更新、クラウド構築は実装していません。受信とPullはinbox保存までで、業務反映workerは起動しません。
 
@@ -45,7 +45,7 @@ export BANGO_PUBLIC_CORPORATE_NUMBER=owner-confirmed-13-digit-number
 
 CLIは専用保存先を排他利用します。`serve`中に別のCLIで同じ状態へ書き込まず、正常終了してから次のコマンドへ進みます。状態は`verification.sqlite`、lockは`.verification.lock`です。異常終了でlockが残った場合は、旧deployment全体を停止し、DB/volumeを使う他のprocessやcontainerがないことをownerが確認してから、DBをバックアップしてlockだけを除去します。lock内のPIDだけで別containerのprocessかどうかを決めつけません。稼働中deploymentや他processが使うDBのlockは削除しません。
 
-今回、npm run経由の`serve`停止後にlockファイルが残りました。旧deploymentが完全に削除・offlineで、ほかに稼働中processがないことを外部確認した後、操作者が既知のPID 25のlockだけを除去しました。直接Nodeを起動した場合のgraceful shutdownはliveで未再検証です。
+今回、npm run経由の`serve`停止後にlockファイルが残りました。旧deploymentが完全に削除・offlineで、ほかに稼働中processがないことを外部確認した後、操作者が既知のPID 25のlockだけを除去しました。この回は別バックアップを作成せず、DBを同じ専用volumeに保持したまま操作しており、上記の推奨バックアップ手順から外れています。直接Nodeを起動した場合のgraceful shutdownはliveで未再検証です。
 
 ## 承認後の実行順序
 
@@ -137,7 +137,7 @@ Railwayではvolumeはruntimeのみでmountされます。build/pre-deployで初
 | 終了証拠 | `node --experimental-strip-types src/verification-cli.ts status` | exit0、Pull後のinbox ID・checkpointPresentを保存 |
 | 実410のみ | `node --experimental-strip-types src/verification-cli.ts recover --confirm` | exit0後にPullへ。失敗なら旧checkpointのまま停止 |
 
-各短期コマンドが終了するとサービスのHTTPは停止します。これは予定した段階動作であり、継続稼働のhealthcheckを付けません。restart NEVERで`init`やPullを自動再実行させず、各段階の終了コード・出力・HEADを確認してから次へ進みます。2026-10-15時点でlive確認したのはinit、新watch、baseline、署名付き`endpoint.test`のHTTP 200、空Pull 1ページ、watch/endpoint cleanupです。通常eventは未観測、Railway設定復元とvolume削除はRailwayの本人認証待ち、実410も未発生です。
+各短期コマンドが終了するとサービスのHTTPは停止します。これは予定した段階動作であり、継続稼働のhealthcheckを付けません。restart NEVERで`init`やPullを自動再実行させず、各段階の終了コード・出力・HEADを確認してから次へ進みます。2026-10-15時点でlive確認したのはinit、新watch、baseline、署名付き`endpoint.test`のHTTP 200、空Pull 1ページ、watch/endpoint cleanupです。通常eventは未観測、Railway元設定への復元と専用volume削除は完了し、元の停止状態（running 0）を確認しました。実410は未発生です。
 
 1サービス・1volumeの短時間検証を提案しますが、料金ゼロや支出上限の自動保証はありません。ownerが金額・時間・保存期限を指定するまでは作成・再deploy・既存secret変更を行いません。旧smokeの署名鍵を取得して再利用しません。
 
@@ -154,7 +154,7 @@ Railwayではvolumeはruntimeのみでmountされます。build/pre-deployで初
 | 欠落補完 | Webhookで未受信だった実eventがPullで追加された証拠 | 未検証 |
 | 410回復 | 自然発生410、復旧前後時刻、baselineとcheckpointのatomic確定 | 未発生・未検証 |
 | watch/endpoint cleanup | 新watchのDELETE応答、endpoint pause/delete、既存watchが不変 | 完了。今回watchはHTTP 200でstopped、endpointはpause後に削除、既存active+stoppedの2 watchは不変 |
-| Railway cleanup | 元のservice設定復元、volume削除、稼働/費用確認 | receiver停止済み。設定復元・volume削除はRailwayの本人認証待ち |
+| Railway cleanup | 元のservice設定復元、volume削除、稼働/費用確認 | 元設定に復元、専用volumeと今回の署名secret削除、running 0を確認。ユーザーが追加したAPIキーは保持。最終請求額は未確認 |
 
 証拠はJST/UTC・検証HEAD・Node版・コマンド（秘密値なし）・終了コード・HTTP status・件数・ID/version・証拠digestに限定します。payload、署名、cursor、APIキー、secret、秘密の受信URLは含めません。
 

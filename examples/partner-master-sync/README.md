@@ -114,7 +114,7 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 
 ### 実APIの手動検証（2026-10-15時点）
 
-owner承認環境で、固定HEAD `461542f`によるinit、新watch登録、baseline、署名付き`endpoint.test`のHTTP 200を確認しました。通常eventは未観測です。空Pullを1ページ実行し、`eventCount=0`、`inserted=0`、`ignoredCount=0`、`hasMore=false`、`gap=false`、前後inbox件数0を確認しました。checkpoint digestは前後同一で、cursor前進の証拠ではありません。endpoint.testがinboxに保存されないことも確認しました。今回watchはDELETE HTTP 200でstopped、endpointはpause後に削除し、既存active/stopped watch 2件は不変でした。Railwayの元設定復元とvolume削除は保留で、実410は未発生です。全体のE2Eは未完了です。秘密値や組織・watch・receiverの識別情報は掲載していません。
+owner承認環境で、固定HEAD `461542f`によるinit、新watch登録、baseline、署名付き`endpoint.test`のHTTP 200を確認しました。通常eventは未観測です。空Pullを1ページ実行し、`eventCount=0`、`inserted=0`、`ignoredCount=0`、`hasMore=false`、`gap=false`、前後inbox件数0を確認しました。checkpoint digestは前後同一で、cursor前進の証拠ではありません。endpoint.testがinboxに保存されないことも確認しました。今回watchはDELETE HTTP 200でstopped、endpointはpause後に削除し、既存active/stopped watch 2件は不変でした。Railwayの元設定復元と専用volume削除も完了し、元の停止状態（running 0）を確認しました。実410は未発生です。全体のE2Eは未完了です。秘密値や組織・watch・receiverの識別情報は掲載していません。
 
 `live:read` はバッチ名寄せ等とcheckpoint取得を行いますが、cursorを次回用に保存せず、watchやendpointも管理しません。`demo` の受信先はloopback上の一時HTTPサーバーと合成鍵です。`verification`は署名検証・永続inbox・checkpoint/Pullを備えますが、実環境での通常event、Pull補完、410回復は未検証です。確認範囲と次の手順は[検証runbook](./VERIFICATION.md)を参照してください。
 
@@ -146,7 +146,7 @@ owner承認環境で、固定HEAD `461542f`によるinit、新watch登録、base
 
 ### 制約
 
-SQLiteは単一org・単一consumer・単一プロセスの学習用です。複数ワーカー、負荷試験、高可用性、outbox、外部副作用のexactly-onceは対象外です。公開HTTPSでの `endpoint.test` と通常変更イベントの実配送は未検証です。検証CLIはHTTP受信とローカル永続化を提供しますが、TLS終端やクラウド環境の自動構築は含みません。
+SQLiteは単一org・単一consumer・単一プロセスの学習用です。複数ワーカー、負荷試験、高可用性、outbox、外部副作用のexactly-onceは対象外です。公開HTTPSでの署名付き `endpoint.test` は確認済みですが、通常変更イベントの実配送は未検証です。検証CLIはHTTP受信とローカル永続化を提供しますが、TLS終端やクラウド環境の自動構築は含みません。
 
 実運用のWebhook管理にはowner/adminのDashboard/JWTが必要です。APIキーでは通知先を作成できません。公開HTTPS・時刻同期・秘密管理・監視・DB運用は利用者側で整備し、サンプルをそのまま本番へ配置しないでください。保持期限外の過去履歴を復元できるとは保証しません。
 
