@@ -10,7 +10,7 @@
 
 | 項目 | 確定する内容 |
 | --- | --- |
-| 操作者・組織 | owner/admin、組織ID、他の操作を並行させない時間帯。初期化時のactive watchは0件 |
+| 操作者・組織 | owner/admin、組織ID、他の操作を並行させない時間帯。既存watchを変更しない。active/stoppedの全一覧が100件以内で、検証法人が未登録であること |
 | APIキー | その組織の検証用キーの**管理名と安全な保管先**。キー自体は環境変数へ供給 |
 | 公開法人 | 名称・法人番号13桁を1件。公表サイトで照合し、既存watchではないことを確認 |
 | 通知先 | owner管理のHTTPS URLと対象service/environment。既存の本番routeを流用しない |
@@ -49,8 +49,8 @@ CLIは専用保存先を排他利用します。`serve`中に別のCLIで同じ�
 
 `--confirm` は操作前提を確認した操作者の明示指定であり、本書やPRの存在が実環境操作の承認になるわけではありません。各コマンドの終了コードと時刻を記録し、失敗したら次へ進みません。
 
-1. **初期状態を記録。** Dashboardで組織・残枠・watch全状態・endpoint全状態を確認。停止済みの同一法人watchがある場合も自動で再利用せず、別の未登録法人を選ぶかownerへ戻します。
-2. **checkpointを先に保存。** 空の組織のactive一覧確認と`start=now`の計2 GETです。
+1. **初期状態を記録。** Dashboardで組織・残枠・watch全状態・endpoint全状態を確認。既存watchはそのまま残します。停止済みや法人番号/T番号の別表記を含め同じ法人のwatchがある場合は、新規検証対象に使いません。既存watchも自分が管理する公開法人だけであることを確認し、顧客・非公開データが含まれる場合は停止します。
+2. **checkpointを先に保存。** 全状態の一覧（`status=all&limit=100`）と`start=now`の計2 GETです。既存watchのID・状態・識別子・subject対応を専用DBに記録し、対象法人が未登録であることを検査します。1ページに収まらなければ停止し、自動でページを追加取得しません。checkpointはwatch作成前の**無filter**で取得し、後から`watch_target_id`を追加しません（cursorのfilter bindingが変わるため）。
 
    ```sh
    npm run verification -- init --confirm
@@ -58,7 +58,7 @@ CLIは専用保存先を排他利用します。`serve`中に別のCLIで同じ�
    ```
 
 3. **承認したwatch 1件を登録。** owner/adminが正規APIで法人番号をPUTします。201と作成ID・subject IDを秘密を除いて記録します。200、timeout、同時操作があった場合は、この実行の新規作成と決めず停止して所有権を照合します。再PUTや自動cleanupはしません。
-4. **baselineを保存。** active一覧がその法人1件だけであることと、GET baselineのwatch/subject対応を検査します。2 GETです。
+4. **baselineを保存。** 全状態の一覧が「保存した既存watch集合のまま＋今回のactive対象1件」であることと、GET baselineのwatch/subject対応を検査します。2 GETです。既存watchの停止・削除・再開、別の追加、対象subjectの衝突があれば停止します。今回のwatch IDも固定し、同じ法人の別watch periodへ自動で乗り換えません。
 
    ```sh
    npm run verification -- baseline --confirm
@@ -66,7 +66,7 @@ CLIは専用保存先を排他利用します。`serve`中に別のCLIで同じ�
    ```
 
 5. **承認したendpointを作成し、安全に鍵を供給。** JWTによる通知先管理とAPIキーによるデータ取得を混同しません。新規作成時の一度限りのsecretを、承認済み秘密管理経路で`BANGO_WEBHOOK_SECRET`へ設定します。作成結果不明なら再作成や既存鍵のrotationをせずowner確認へ戻します。
-受信入口は既存の署名検証を再利用し、検証CLIではbaselineと同じsubjectの通常イベントだけをinboxへ保存します。検証中にwatchを増やしたり、別組織の署名鍵へ差し替えたりしません。Pullもbaselineと異なるsubjectを含むページを拒否します。
+受信入口は既存の署名検証を再利用し、検証CLIではbaselineと同じsubjectの通常イベントだけをinboxへ保存します。通知先には法人単位のfilterがないため、既存watchのイベントも届く可能性があります。正しい署名・構造で対象外のsubjectなら保存せず200を返し、不要な再送を避けます。不正署名や不正構造は従来どおり拒否します。検証中はwatchの並行編集や別組織の署名鍵への差し替えをしません。
 
 6. **受信を開始。** 既定はloopback。クラウドでは承認したserviceだけで`HOST=0.0.0.0`、既存の公開portを設定します。既存入口は`POST /webhooks/demo`、最大body 64 KiBです。healthcheck専用routeはありません。providerで既存`/health`チェックをそのまま設定しないでください。
 
@@ -85,7 +85,7 @@ CLIは専用保存先を排他利用します。`serve`中に別のCLIで同じ�
    npm run verification -- status
    ```
 
-   Pullは1回につき1 GET、最大100イベントです。`hasMore=true`なら承認した回数上限内だけ手動で繰り返します。空ページは「実APIでcheckpointを保存して継続できた」証拠であり、欠落イベントを回復した証拠ではありません。`eventCount`はページ件数、`inserted`は今回追加したinbox件数です。同じIDをWebhookとPullで受けてもinboxは1件です。Pull前後の差とsender側記録で経路を区別します。
+   Pullは1回につき1 GET、最大100イベントです。無filterのページから対象subjectだけをinboxへ保存し、対象外イベントは保存・ログ出力せず破棄します。対象外だけのページでも返却されたcheckpointを原子的に進めます。これは今回専用DBのcursorだけで、他のconsumerや既存watchには影響しません。`hasMore=true`なら承認した回数上限内だけ手動で繰り返します。空ページは「実APIでcheckpointを保存して継続できた」証拠であり、欠落イベントを回復した証拠ではありません。`eventCount`はページ件数、`inserted`は今回追加したinbox件数です。`ignoredCount`は対象外件数です。同じIDをWebhookとPullで受けてもinboxは1件です。Pull前後の差とsender側記録で経路を区別します。
 
 ## 410とcheckpointの扱い
 
@@ -97,7 +97,9 @@ npm run verification -- recover --confirm
 npm run verification -- pull --confirm
 ```
 
-`recover`は新`start=now` → active watch一覧 → 対象1件のfresh baselineの順で計3 GET。snapshotと新checkpointを一つのtransactionで確定します。途中失敗なら旧checkpointを維持し、対象の追加や別subjectへの変更なら停止します。旧inboxを消さず、保持期限外の過去履歴が復元されたとは扱いません。410がなければこの操作は実施せず、回復はローカル合成試験だけと記録します。
+`recover`は新`start=now` → 全状態のwatch一覧の保存集合照合 → 対象1件のfresh baselineの順で計3 GET。snapshotと新checkpointを一つのtransactionで確定します。途中失敗なら旧checkpointを維持し、保存した既存watchの変更、別watch IDや別subjectへの変更なら停止します。旧inboxを消さず、保持期限外の過去履歴が復元されたとは扱いません。410がなければこの操作は実施せず、回復はローカル合成試験だけと記録します。
+
+無filterのPullと組織単位のWebhookでは、対象外の公開法人payloadを一時的にメモリで受け取ることがあります。対象外payload・IDを保存やログへ残しません。既存watchのpayloadまで保存するためにscopeを広げたり、既存consumerのcursorを流用したりしません。
 
 状態をrollbackする場合、受信停止・DB接続終了後に保存ディレクトリ全体を保護領域へバックアップします。SQLiteの稼働中の本体ファイルだけをコピーしません。復元は**同じ組織・同じ法人**に限り、古いcheckpointからの再取得と重複排除を前提にします。旧checkpointが失効していれば410手順へ戻ります。秘密値やDBそのものをPR/Issueへ添付しません。
 
@@ -143,7 +145,7 @@ Railwayではvolumeはruntimeのみでmountされます。build/pre-deployで初
 | --- | --- | --- |
 | 組織・対象・残枠 | owner実行票、watch/endpoint事前一覧、対象法人1件 | 未確定 |
 | checkpoint先行 | init成功時刻 < watch作成時刻、再起動後checkpointPresent | 未検証 |
-| baseline | watch/subject/version、再起動後の状態 | 未検証 |
+| baseline | 既存watch集合が不変、今回watch/subject/version、再起動後の状態 | 未検証 |
 | HTTPS test | test結果、HTTP200、通常inbox増加0 | 未検証 |
 | 通常配送 | 同eventのsender成功、Pull前のinbox ID、再起動後の保持 | 未観測 |
 | Pull | page件数、inserted件数、同IDの重複排除、checkpoint保存 | 未検証 |

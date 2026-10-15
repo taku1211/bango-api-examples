@@ -19,10 +19,13 @@ import {
 } from '../src/verification.ts';
 import { runVerificationCli } from '../src/verification-cli.ts';
 
-const config: VerificationConfig = { organization: 'org_demo_01', corporateNumber: '1234567890123' };
+const config: VerificationConfig = { organization: 'org_demo_01', corporateNumber: '9999999999999' };
 const subjectId = 'sub_123e4567-e89b-42d3-a456-426614174000';
 const otherSubjectId = 'sub_123e4567-e89b-42d3-a456-426614174002';
 const watchId = 'wt_123e4567-e89b-42d3-a456-426614174001';
+const toyotaSubjectId = 'sub_123e4567-e89b-42d3-a456-426614174010';
+const toyotaActiveWatchId = 'wt_123e4567-e89b-42d3-a456-426614174011';
+const toyotaStoppedWatchId = 'wt_123e4567-e89b-42d3-a456-426614174012';
 const secret = 'whsec_' + Buffer.from('verification-test-key').toString('base64');
 
 function tempDir(): string {
@@ -42,8 +45,25 @@ function event(id: string, version = '2'): ChangeEvent {
   };
 }
 
+function initialInventory() {
+  return { data: [
+    { id: toyotaActiveWatchId, identifier: '1180301018771', status: 'active', subject: { id: toyotaSubjectId, kind: 'corporation' } },
+    { id: toyotaStoppedWatchId, identifier: '1180301018771', status: 'stopped', subject: { id: toyotaSubjectId, kind: 'corporation' } },
+  ], has_more: false };
+}
+
 function watchList(identifier = config.corporateNumber, id = watchId, subject = subjectId) {
-  return { data: [{ id, identifier, status: 'active', subject: { id: subject, kind: 'corporation' } }], has_more: false };
+  return { data: [...initialInventory().data, { id, identifier, status: 'active', subject: { id: subject, kind: 'corporation' } }], has_more: false };
+}
+
+function targetCollisionInventory(identifier = config.corporateNumber) {
+  return { data: [...initialInventory().data, { id: watchId, identifier, status: 'stopped', subject: { id: subjectId, kind: 'corporation' } }], has_more: false };
+}
+
+function changedHistoricalInventory() {
+  const inventory = watchList();
+  inventory.data[1] = { ...inventory.data[1], status: 'active' };
+  return inventory;
 }
 
 function baseline(id = watchId, subject = subjectId, version = '1') {
@@ -82,19 +102,21 @@ test('init persists the owner assertion and checkpoint across a process restart 
   try {
     const stateDir = join(dir, 'state');
     const first = harness(stateDir, [
-      { body: { data: [], has_more: false } },
+      { body: initialInventory() },
       { body: startNow('opaque-checkpoint-secret') },
     ]);
     try {
       await first.harness.init();
       assert.deepEqual(first.queue.methods, ['GET', 'GET']);
-      assert.match(first.queue.paths[0], /watch-targets\?status=active&limit=2$/);
+      assert.match(first.queue.paths[0], /watch-targets\?status=all&limit=100$/);
       assert.match(first.queue.paths[1], /change-events\?mode=incremental&start=now$/);
+      assert.deepEqual(JSON.parse((first.db.prepare("SELECT value FROM verification_state WHERE key='initial_inventory'").get() as { value: string }).value), initialInventory().data);
       assert.deepEqual(verificationStatus(first.db), {
         organization: config.organization,
         corporateNumber: config.corporateNumber,
         subjectId: null,
         subjectVersion: null,
+        watchId: null,
         checkpointPresent: true,
         gap: false,
         inboxCount: 0,
@@ -111,18 +133,24 @@ test('init persists the owner assertion and checkpoint across a process restart 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('init refuses active watches and baseline refuses a subject mismatch without replacing the checkpoint', async () => {
+test('init refuses a previously watched target while preserving unrelated active and stopped watches', async () => {
   const dir = tempDir();
   try {
-    const active = harness(join(dir, 'active'), [{ body: watchList() }]);
+    const active = harness(join(dir, 'active'), [{ body: targetCollisionInventory() }]);
     try {
-      await assert.rejects(active.harness.init(), (error: unknown) => error instanceof VerificationError && error.code === 'ActiveWatchSetMismatch');
+      await assert.rejects(active.harness.init(), (error: unknown) => error instanceof VerificationError && error.code === 'TargetAlreadyWatched');
       assert.equal(getCheckpoint(active.db), null);
-      assert.equal(active.queue.paths.length, 1, 'start=now is not called when an active watch exists');
+      assert.equal(active.queue.paths.length, 1, 'start=now is not called when target history exists');
     } finally { active.db.close(); }
 
+    const invoiceTargetCollision = harness(join(dir, 'invoice-target'), [{ body: targetCollisionInventory(`T${config.corporateNumber}`) }]);
+    try {
+      await assert.rejects(invoiceTargetCollision.harness.init(), (error: unknown) => error instanceof VerificationError && error.code === 'TargetAlreadyWatched');
+      assert.equal(getCheckpoint(invoiceTargetCollision.db), null);
+    } finally { invoiceTargetCollision.db.close(); }
+
     const before = harness(join(dir, 'mismatch'), [
-      { body: { data: [], has_more: false } },
+      { body: initialInventory() },
       { body: startNow('old-cursor') },
       { body: watchList(config.corporateNumber, watchId, subjectId) },
       { body: baseline(watchId, otherSubjectId) },
@@ -136,11 +164,48 @@ test('init refuses active watches and baseline refuses a subject mismatch withou
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('baseline refuses changes to any preexisting watch period and a reused subject', async () => {
+  const dir = tempDir();
+  try {
+    const changed = harness(join(dir, 'changed'), [
+      { body: initialInventory() }, { body: startNow('cursor-before') },
+      { body: changedHistoricalInventory() },
+    ]);
+    try {
+      await changed.harness.init();
+      await assert.rejects(changed.harness.baseline(), (error: unknown) => error instanceof VerificationError && error.code === 'WatchInventoryMismatch');
+      assert.equal(getCheckpoint(changed.db), 'cursor-before');
+      assert.equal(changed.queue.paths.length, 3, 'baseline is not fetched after inventory changed');
+    } finally { changed.db.close(); }
+
+    const reusedSubject = harness(join(dir, 'reused-subject'), [
+      { body: initialInventory() }, { body: startNow('cursor-before') },
+      { body: watchList(config.corporateNumber, watchId, toyotaSubjectId) },
+    ]);
+    try {
+      await reusedSubject.harness.init();
+      await assert.rejects(reusedSubject.harness.baseline(), (error: unknown) => error instanceof VerificationError && error.code === 'WatchSubjectCollision');
+      assert.equal(getCheckpoint(reusedSubject.db), 'cursor-before');
+      assert.equal(reusedSubject.queue.paths.length, 3, 'baseline is not fetched for a reused subject');
+    } finally { reusedSubject.db.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('init refuses a partial watch inventory before obtaining a checkpoint', async () => {
+  const dir = tempDir();
+  const setup = harness(join(dir, 'state'), [{ body: { ...initialInventory(), has_more: true } }]);
+  try {
+    await assert.rejects(setup.harness.init(), (error: unknown) => error instanceof VerificationError && error.code === 'RemoteResponseInvalid');
+    assert.equal(setup.queue.paths.length, 1);
+    assert.equal(getCheckpoint(setup.db), null);
+  } finally { setup.db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('one pull page is atomic when an inbox insert fails', async () => {
   const dir = tempDir();
   try {
     const setup = harness(join(dir, 'state'), [
-      { body: { data: [], has_more: false } },
+      { body: initialInventory() },
       { body: startNow('checkpoint-before') },
       { body: watchList() },
       { body: baseline() },
@@ -163,7 +228,7 @@ test('a stubbed HTTP 410 records a gap; failed recovery preserves checkpoint and
   const dir = tempDir();
   try {
     const initial = harness(join(dir, 'state'), [
-      { body: { data: [], has_more: false } }, { body: startNow('checkpoint-before') },
+      { body: initialInventory() }, { body: startNow('checkpoint-before') },
       { body: watchList() }, { body: baseline() }, { status: 410, body: { detail: 'sensitive response detail' } },
     ]);
     try {
@@ -178,10 +243,10 @@ test('a stubbed HTTP 410 records a gap; failed recovery preserves checkpoint and
 
     const failed = harness(join(dir, 'state'), [
       { body: startNow('must-not-commit') },
-      { body: { data: [{ id: watchId, identifier: config.corporateNumber, subject: { id: otherSubjectId, kind: 'corporation' } }], has_more: false } },
+      { body: changedHistoricalInventory() },
     ]);
     try {
-      await assert.rejects(failed.harness.recover(), (error: unknown) => error instanceof VerificationError && error.code === 'BoundSubjectMismatch');
+      await assert.rejects(failed.harness.recover(), (error: unknown) => error instanceof VerificationError && error.code === 'WatchInventoryMismatch');
       assert.deepEqual(failed.queue.paths.map(path => new URL(path).pathname), ['/v1/change-events', '/v1/watch-targets']);
       assert.equal(getCheckpoint(failed.db), 'checkpoint-before');
       assert.equal(verificationStatus(failed.db).gap, true);
@@ -197,7 +262,7 @@ test('a stubbed HTTP 410 records a gap; failed recovery preserves checkpoint and
       await recovered.harness.recover();
       assert.deepEqual(recovered.queue.methods, ['GET', 'GET', 'GET']);
       assert.deepEqual(recovered.queue.paths.map(path => new URL(path).pathname), [
-        '/v1/change-events', '/v1/watch-targets', '/v1/watch-targets/1234567890123',
+        '/v1/change-events', '/v1/watch-targets', `/v1/watch-targets/${config.corporateNumber}`,
       ]);
       assert.equal(getCheckpoint(recovered.db), 'checkpoint-after-recovery');
       assert.equal(verificationStatus(recovered.db).gap, false);
@@ -206,36 +271,34 @@ test('a stubbed HTTP 410 records a gap; failed recovery preserves checkpoint and
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('pull encodes opaque cursors and only accepts a valid incremental page for the bound subject', async () => {
+test('pull stores only the bound subject from a mixed page and atomically advances the org-wide cursor', async () => {
   const dir = tempDir();
   try {
     const setup = harness(join(dir, 'state'), [
-      { body: { data: [], has_more: false } }, { body: startNow('cursor') },
+      { body: initialInventory() }, { body: startNow('cursor') },
       { body: watchList() }, { body: baseline() },
-      { body: { mode: 'incremental', continuity_guaranteed: true, data: [event('evt_valid')], next_cursor: 'cursor+/next', has_more: true } },
+      { body: { mode: 'incremental', continuity_guaranteed: true, data: [
+        event('evt_valid'),
+        { ...event('evt_other_watch'), subject: { id: toyotaSubjectId, version: '7', corporate_number: '1180301018771' } },
+      ], next_cursor: 'cursor+/next', has_more: true } },
+      { body: { mode: 'incremental', continuity_guaranteed: true, data: [
+        { ...event('evt_only_other_watch'), subject: { id: toyotaSubjectId, version: '8', corporate_number: '1180301018771' } },
+      ], next_cursor: 'cursor-after-ignored-page', has_more: false } },
     ]);
     try {
       await setup.harness.init();
       await setup.harness.baseline();
-      assert.deepEqual(await setup.harness.pull(), { inserted: 1, eventCount: 1, hasMore: true });
+      assert.deepEqual(await setup.harness.pull(), { inserted: 1, eventCount: 2, ignoredCount: 1, hasMore: true });
       const requested = new URL(setup.queue.paths[4]);
       assert.equal(requested.searchParams.get('cursor'), 'cursor');
       assert.equal(requested.searchParams.get('limit'), '100');
       assert.equal(getCheckpoint(setup.db), 'cursor+/next');
+      assert.deepEqual((setup.db.prepare('SELECT event_id FROM inbox ORDER BY event_id').all() as Array<{ event_id: string }>).map(row => row.event_id), ['evt_valid']);
+      assert.deepEqual(await setup.harness.pull(), { inserted: 0, eventCount: 1, ignoredCount: 1, hasMore: false });
+      assert.equal(new URL(setup.queue.paths[5]).searchParams.get('cursor'), 'cursor+/next');
+      assert.equal(getCheckpoint(setup.db), 'cursor-after-ignored-page');
+      assert.deepEqual((setup.db.prepare('SELECT event_id FROM inbox').all() as Array<{ event_id: string }>).map(row => row.event_id), ['evt_valid']);
     } finally { setup.db.close(); }
-
-    const wrongSubject = harness(join(dir, 'wrong-subject'), [
-      { body: { data: [], has_more: false } }, { body: startNow('before') },
-      { body: watchList() }, { body: baseline() },
-      { body: { mode: 'incremental', continuity_guaranteed: true, data: [{ ...event('evt_wrong_subject'), subject: { id: 'sub_foreign', version: '2' } }], next_cursor: 'after', has_more: false } },
-    ]);
-    try {
-      await wrongSubject.harness.init();
-      await wrongSubject.harness.baseline();
-      await assert.rejects(wrongSubject.harness.pull(), (error: unknown) => error instanceof VerificationError && error.code === 'EventSubjectMismatch');
-      assert.equal(getCheckpoint(wrongSubject.db), 'before');
-      assert.equal((wrongSubject.db.prepare('SELECT COUNT(*) AS count FROM inbox').get() as { count: number }).count, 0);
-    } finally { wrongSubject.db.close(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -275,7 +338,7 @@ test('serve refuses a changed owner assertion before opening the webhook listene
   try {
     const stateDir = join(dir, 'state');
     const prepared = harness(stateDir, [
-      { body: { data: [], has_more: false } }, { body: startNow('cursor') },
+      { body: initialInventory() }, { body: startNow('cursor') },
       { body: watchList() }, { body: baseline() },
     ]);
     try {
@@ -305,7 +368,7 @@ test('CLI reports the HTTP 410 status while keeping the response body and cursor
   try {
     const stateDir = join(dir, 'state');
     const prepared = harness(stateDir, [
-      { body: { data: [], has_more: false } }, { body: startNow('private-cursor-value') },
+      { body: initialInventory() }, { body: startNow('private-cursor-value') },
       { body: watchList() }, { body: baseline() },
     ]);
     try {
@@ -333,13 +396,13 @@ test('CLI reports the HTTP 410 status while keeping the response body and cursor
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('serve CLI receives a signed event, rejects another subject, stops on SIGTERM, and persists evidence for status', async () => {
+test('serve CLI receives a signed event, ignores another subject, stops on SIGTERM, and persists evidence for status', async () => {
   const dir = tempDir();
   let child: ReturnType<typeof spawn> | undefined;
   try {
     const stateDir = join(dir, 'state');
     const prepared = harness(stateDir, [
-      { body: { data: [], has_more: false } }, { body: startNow('private-cursor-value') },
+      { body: initialInventory() }, { body: startNow('private-cursor-value') },
       { body: watchList() }, { body: baseline() },
     ]);
     try {
@@ -387,7 +450,7 @@ test('serve CLI receives a signed event, rejects another subject, stops on SIGTE
     assert.equal((await fetch(endpoint, { method: 'POST', headers: acceptedMessage.headers, body: acceptedMessage.body })).status, 200);
     const foreignEvent = { ...event('evt_123e4567-e89b-42d3-a456-426614174098'), subject: { ...event('evt_unused').subject, id: otherSubjectId } };
     const foreignMessage = signDemo(secret, foreignEvent);
-    assert.equal((await fetch(endpoint, { method: 'POST', headers: foreignMessage.headers, body: foreignMessage.body })).status, 400);
+    assert.equal((await fetch(endpoint, { method: 'POST', headers: foreignMessage.headers, body: foreignMessage.body })).status, 200);
 
     let shutdownWatchdog: NodeJS.Timeout;
     const serverClosed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {

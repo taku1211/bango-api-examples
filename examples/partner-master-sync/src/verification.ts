@@ -1,7 +1,7 @@
 import { chmodSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, unlinkSync, writeSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { applySnapshot, getCheckpoint, openStore, setCheckpoint, storePullPage, transaction, validEvent, type ChangeEvent, type Snapshot, type Subject } from './core.ts';
+import { applySnapshot, getCheckpoint, openStore, setCheckpoint, storeEvent, transaction, validEvent, type ChangeEvent, type Snapshot, type Subject } from './core.ts';
 
 const API_BASE = 'https://api.bango-api.jp/v1/';
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -14,7 +14,7 @@ type JsonObject = Record<string, unknown>;
 type FetchLike = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 
 export type VerificationConfig = { organization: string; corporateNumber: string };
-export type ActiveWatch = { id: string; identifier: string; subject: { id: string; kind: string } };
+export type WatchInventoryEntry = { id: string; identifier: string; status: 'active' | 'stopped'; subject: { id: string; kind: string } };
 export type WatchSnapshot = { id: string; status: 'active'; subject: Subject & { kind: string }; current: Snapshot };
 export type IncrementalPage = { mode: 'incremental'; continuity_guaranteed: true; data: ChangeEvent[]; next_cursor: string; has_more: boolean };
 export type VerificationSummary = {
@@ -22,6 +22,7 @@ export type VerificationSummary = {
   corporateNumber: string | null;
   subjectId: string | null;
   subjectVersion: string | null;
+  watchId: string | null;
   checkpointPresent: boolean;
   gap: boolean;
   inboxCount: number;
@@ -88,18 +89,22 @@ export class VerificationApi {
     }
   }
 
-  async activeWatches(): Promise<ActiveWatch[]> {
-    const data = await this.get('watch-targets?status=active&limit=2');
-    if (!object(data) || !Array.isArray(data.data) || data.has_more !== false || data.data.length > 2) {
+  async watchInventory(): Promise<WatchInventoryEntry[]> {
+    const data = await this.get('watch-targets?status=all&limit=100');
+    if (!object(data) || !Array.isArray(data.data) || data.has_more !== false || data.data.length > PAGE_LIMIT) {
       throw new VerificationError('RemoteResponseInvalid');
     }
-    return data.data.map((value) => {
-      if (!object(value) || typeof value.id !== 'string' || !WATCH_ID.test(value.id) || typeof value.identifier !== 'string' ||
-          !object(value.subject) || typeof value.subject.id !== 'string' || !SUBJECT_ID.test(value.subject.id) || typeof value.subject.kind !== 'string') {
+    const inventory = data.data.map((value) => {
+      if (!object(value) || typeof value.id !== 'string' || !WATCH_ID.test(value.id) ||
+          typeof value.identifier !== 'string' || !/^(?:\d{13}|T\d{13})$/.test(value.identifier) ||
+          (value.status !== 'active' && value.status !== 'stopped') || !object(value.subject) ||
+          typeof value.subject.id !== 'string' || !SUBJECT_ID.test(value.subject.id) || typeof value.subject.kind !== 'string') {
         throw new VerificationError('RemoteResponseInvalid');
       }
-      return { id: value.id, identifier: value.identifier, subject: { id: value.subject.id, kind: value.subject.kind } };
+      return { id: value.id, identifier: value.identifier, status: value.status as WatchInventoryEntry['status'], subject: { id: value.subject.id, kind: value.subject.kind } };
     });
+    if (new Set(inventory.map(entry => entry.id)).size !== inventory.length) throw new VerificationError('RemoteResponseInvalid');
+    return inventory;
   }
 
   async startNow(): Promise<string> {
@@ -160,18 +165,72 @@ function requireBoundConfig(db: DatabaseSync, config: VerificationConfig): void 
   }
 }
 
-function requireOneMatchingWatch(watches: ActiveWatch[], corporateNumber: string, subjectId?: string): ActiveWatch {
-  if (watches.length !== 1 || watches[0].identifier !== corporateNumber || watches[0].subject.kind !== 'corporation') {
-    throw new VerificationError('ActiveWatchSetMismatch');
-  }
-  if (subjectId && watches[0].subject.id !== subjectId) throw new VerificationError('BoundSubjectMismatch');
-  return watches[0];
-}
-
-function requireMatchingBaseline(watch: ActiveWatch, baseline: WatchSnapshot): void {
+function requireMatchingBaseline(watch: WatchInventoryEntry, baseline: WatchSnapshot): void {
   if (baseline.id !== watch.id || baseline.subject.id !== watch.subject.id || baseline.status !== 'active' || baseline.subject.kind !== 'corporation') {
     throw new VerificationError('BaselineWatchMismatch');
   }
+}
+
+function sortedInventory(inventory: WatchInventoryEntry[]): WatchInventoryEntry[] {
+  return [...inventory].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function serializeInventory(inventory: WatchInventoryEntry[]): string {
+  return JSON.stringify(sortedInventory(inventory));
+}
+
+function readInventory(db: DatabaseSync, key: string): WatchInventoryEntry[] {
+  const value = state(db, key);
+  if (value === null) throw new VerificationError('WatchInventoryUnavailable');
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new VerificationError('WatchInventoryUnavailable'); }
+  if (!Array.isArray(parsed)) throw new VerificationError('WatchInventoryUnavailable');
+  for (const entry of parsed) {
+    if (!object(entry) || typeof entry.id !== 'string' || !WATCH_ID.test(entry.id) ||
+        typeof entry.identifier !== 'string' || !/^(?:\d{13}|T\d{13})$/.test(entry.identifier) ||
+        (entry.status !== 'active' && entry.status !== 'stopped') || !object(entry.subject) ||
+        typeof entry.subject.id !== 'string' || !SUBJECT_ID.test(entry.subject.id) || typeof entry.subject.kind !== 'string') {
+      throw new VerificationError('WatchInventoryUnavailable');
+    }
+  }
+  return parsed as WatchInventoryEntry[];
+}
+
+function requireUnchangedInventory(expected: WatchInventoryEntry[], actual: WatchInventoryEntry[]): void {
+  if (serializeInventory(expected) !== serializeInventory(actual)) throw new VerificationError('WatchInventoryMismatch');
+}
+
+function requireOneAddedTarget(
+  before: WatchInventoryEntry[],
+  current: WatchInventoryEntry[],
+  corporateNumber: string,
+): WatchInventoryEntry {
+  const beforeById = new Map(before.map(entry => [entry.id, entry]));
+  const currentById = new Map(current.map(entry => [entry.id, entry]));
+  if (currentById.size !== current.length || beforeById.size !== before.length) throw new VerificationError('WatchInventoryMismatch');
+  for (const entry of before) {
+    const now = currentById.get(entry.id);
+    if (!now || JSON.stringify(now) !== JSON.stringify(entry)) throw new VerificationError('WatchInventoryMismatch');
+  }
+  const added = current.filter(entry => !beforeById.has(entry.id));
+  if (added.length !== 1 || added[0].identifier !== corporateNumber || added[0].status !== 'active' || added[0].subject.kind !== 'corporation') {
+    throw new VerificationError('WatchInventoryMismatch');
+  }
+  if (before.some(entry => entry.subject.id === added[0].subject.id)) throw new VerificationError('WatchSubjectCollision');
+  return added[0];
+}
+
+function storeTargetPullPage(db: DatabaseSync, page: IncrementalPage, subjectId: string): { inserted: number; ignoredCount: number } {
+  return transaction(db, () => {
+    let inserted = 0;
+    let ignoredCount = 0;
+    for (const event of page.data) {
+      if (event.subject.id !== subjectId) { ignoredCount++; continue; }
+      inserted += Number(storeEvent(db, event));
+    }
+    setCheckpoint(db, page.next_cursor);
+    return { inserted, ignoredCount };
+  });
 }
 
 function verifyEmptyStore(db: DatabaseSync): void {
@@ -205,12 +264,15 @@ export class VerificationHarness {
 
   async init(): Promise<void> {
     verifyEmptyStore(this.db);
-    const watches = await this.remoteApi().activeWatches();
-    if (watches.length !== 0 || state(this.db, 'organization') !== null) throw new VerificationError('ActiveWatchSetMismatch');
+    const inventory = await this.remoteApi().watchInventory();
+    if (inventory.some(entry => entry.identifier === this.config.corporateNumber || entry.identifier === `T${this.config.corporateNumber}`)) {
+      throw new VerificationError('TargetAlreadyWatched');
+    }
     const cursor = await this.remoteApi().startNow();
     transaction(this.db, () => {
       setState(this.db, 'organization', this.config.organization);
       setState(this.db, 'corporate_number', this.config.corporateNumber);
+      setState(this.db, 'initial_inventory', serializeInventory(inventory));
       setCheckpoint(this.db, cursor);
     });
   }
@@ -219,7 +281,9 @@ export class VerificationHarness {
     requireBoundConfig(this.db, this.config);
     if (!getCheckpoint(this.db) || state(this.db, 'gap') === '1') throw new VerificationError('BaselineUnavailable');
     if (state(this.db, 'baseline_complete') === '1') throw new VerificationError('BaselineAlreadyComplete');
-    const watch = requireOneMatchingWatch(await this.remoteApi().activeWatches(), this.config.corporateNumber);
+    const initialInventory = readInventory(this.db, 'initial_inventory');
+    const currentInventory = await this.remoteApi().watchInventory();
+    const watch = requireOneAddedTarget(initialInventory, currentInventory, this.config.corporateNumber);
     const baseline = await this.remoteApi().baseline(this.config.corporateNumber);
     requireMatchingBaseline(watch, baseline);
     transaction(this.db, () => {
@@ -227,10 +291,12 @@ export class VerificationHarness {
       setState(this.db, 'baseline_complete', '1');
       setState(this.db, 'subject_id', baseline.subject.id);
       setState(this.db, 'subject_version', baseline.subject.version);
+      setState(this.db, 'watch_id', watch.id);
+      setState(this.db, 'watch_inventory', serializeInventory(currentInventory));
     });
   }
 
-  async pull(): Promise<{ inserted: number; eventCount: number; hasMore: boolean }> {
+  async pull(): Promise<{ inserted: number; eventCount: number; ignoredCount: number; hasMore: boolean }> {
     requireBoundConfig(this.db, this.config);
     if (state(this.db, 'baseline_complete') !== '1' || state(this.db, 'gap') === '1') throw new VerificationError('BaselineUnavailable');
     const cursor = getCheckpoint(this.db);
@@ -246,9 +312,8 @@ export class VerificationHarness {
       }
       throw error;
     }
-    if (page.data.some(event => event.subject.id !== subjectId)) throw new VerificationError('EventSubjectMismatch');
-    const inserted = storePullPage(this.db, { mode: page.mode, data: page.data, next_cursor: page.next_cursor });
-    return { inserted, eventCount: page.data.length, hasMore: page.has_more };
+    const { inserted, ignoredCount } = storeTargetPullPage(this.db, page, subjectId);
+    return { inserted, eventCount: page.data.length, ignoredCount, hasMore: page.has_more };
   }
 
   async recover(): Promise<void> {
@@ -256,14 +321,21 @@ export class VerificationHarness {
     if (state(this.db, 'baseline_complete') !== '1' || state(this.db, 'gap') !== '1') throw new VerificationError('RecoveryNotAvailable');
     const cursor = await this.remoteApi().startNow();
     const boundSubjectId = state(this.db, 'subject_id');
-    if (!boundSubjectId) throw new VerificationError('BoundSubjectMismatch');
-    const watch = requireOneMatchingWatch(await this.remoteApi().activeWatches(), this.config.corporateNumber, boundSubjectId);
+    const boundWatchId = state(this.db, 'watch_id');
+    if (!boundSubjectId || !boundWatchId) throw new VerificationError('BoundSubjectMismatch');
+    const watchInventory = readInventory(this.db, 'watch_inventory');
+    const currentInventory = await this.remoteApi().watchInventory();
+    requireUnchangedInventory(watchInventory, currentInventory);
+    const watch = currentInventory.find(entry => entry.id === boundWatchId);
+    if (!watch || watch.identifier !== this.config.corporateNumber || watch.status !== 'active' ||
+        watch.subject.kind !== 'corporation' || watch.subject.id !== boundSubjectId) throw new VerificationError('BoundWatchMismatch');
     const baseline = await this.remoteApi().baseline(this.config.corporateNumber);
     requireMatchingBaseline(watch, baseline);
     transaction(this.db, () => {
       applySnapshot(this.db, baseline.subject, baseline.current);
       setState(this.db, 'subject_id', baseline.subject.id);
       setState(this.db, 'subject_version', baseline.subject.version);
+      setState(this.db, 'watch_inventory', serializeInventory(currentInventory));
       setCheckpoint(this.db, cursor);
       setState(this.db, 'gap', '0');
     });
@@ -311,6 +383,7 @@ export function verificationStatus(db: DatabaseSync): VerificationSummary {
     corporateNumber: safeDisplay(state(db, 'corporate_number'), /^\d{13}$/),
     subjectId: safeDisplay(state(db, 'subject_id'), SUBJECT_ID) ?? safeDisplay(subject?.subject_id, SUBJECT_ID),
     subjectVersion: safeDisplay(state(db, 'subject_version'), /^(0|[1-9][0-9]{0,63})$/) ?? safeDisplay(subject?.version, /^(0|[1-9][0-9]{0,63})$/),
+    watchId: safeDisplay(state(db, 'watch_id'), WATCH_ID),
     checkpointPresent: getCheckpoint(db) !== null,
     gap: state(db, 'gap') === '1',
     inboxCount: inbox.count,

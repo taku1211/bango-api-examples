@@ -19,9 +19,9 @@ type Command = 'init' | 'baseline' | 'pull' | 'recover' | 'serve' | 'status';
 const HELP = `Usage:
   npm run verification -- <init|baseline|pull|recover|serve|status> [--confirm]
 
-init requires no active watch targets and saves an incremental start=now checkpoint.
-baseline requires exactly one active corporate watch for BANGO_PUBLIC_CORPORATE_NUMBER.
-pull fetches one incremental page and stores events in the local inbox only.
+init records the all-status watch inventory and saves an incremental start=now checkpoint.
+baseline requires exactly one newly added active corporate watch for BANGO_PUBLIC_CORPORATE_NUMBER; prior watch history must be unchanged.
+pull fetches one org-wide incremental page, stores only the bound subject, and advances past other subjects.
 recover is available only after pull records an HTTP 410 continuity gap.
 serve accepts signed webhooks at /webhooks/demo for at most 30 minutes (default 10).
 status reports local identifiers, versions, counts, checkpoint presence, and gap state.
