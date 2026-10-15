@@ -9,7 +9,8 @@
     "demo": "node --experimental-strip-types src/cli.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "live:read": "node --env-file-if-exists=.env.local --experimental-strip-types src/live-cli.ts"
+    "live:read": "node --env-file-if-exists=.env.local --experimental-strip-types src/live-cli.ts",
+    "verification": "node --env-file-if-exists=.env.local --experimental-strip-types src/verification-cli.ts"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
