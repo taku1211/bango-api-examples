@@ -94,9 +94,9 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 - `src/live.ts` / `src/live-cli.ts`: 公開OpenAPIに沿った実API照会と明示的な起動。
 - `tests/`: 署名fixture、HTTP/SQLiteの動作、実APIアダプターのモック契約テスト。
 
-`npm test` は外部APIを呼びません。署名改竄・raw body・鍵rotation・時刻境界・endpoint.test・COMMIT失敗・再送重複・順序逆転・大整数版数・削除・再起動・Pull/410のほか、liveのジョブ遷移とエラーを検証します。型チェックは `npm run typecheck`。この独立サンプルにはlint設定やCI workflowを追加していません。
+`npm test` は外部APIを呼びません。署名改竄・raw body・鍵rotation・時刻境界・endpoint.test・COMMIT失敗・再送重複・順序逆転・大整数版数・削除・再起動・Pull/410のほか、liveのジョブ遷移とエラーを検証します。型チェックは `npm run typecheck`。専用の[GitHub Actions](../../.github/workflows/partner-master-sync.yml)は、対象ディレクトリまたはworkflowの変更があるmain向けPR（Draftを含む）とmainへのpushで、Node 22/24の `npm ci`・typecheck・test・demoを実行します。Bangoのキーや実APIは使いません。サンプル自体のlint設定はありません。
 
-### 実行記録（2026-10-15 JST）
+### 前回の実行記録（2026-10-15 JST、今回の行対応修正前）
 
 | 確認対象 | 結果 |
 | --- | --- |
@@ -107,7 +107,39 @@ Bango実装の署名関数・鍵選択を**ローカルで実行して生成し�
 
 名寄せ結果は `review` だったため、自動紐付け・その候補の自動照会を行いませんでした。confidentからの連続照会はモック契約テストで確認し、実APIでは未確認です。実接続は計6リクエスト、名寄せ入力1件。レスポンスのquotaは `unlimited: true` で、**Freeプランの実枠消費や上限内動作は未実証**です。Free向けの呼び出し上限は上記の計算と契約テストによる確認です。認証情報・ジョブID・cursorはこの記録へ載せていません。
 
-GitHub CIは未実施です。Nodeを明示する前の依存インストールは環境のnpm cache権限で一度失敗し、作業専用cacheと明示したNodeで再実行して成功しました。API本体や価格・契約には変更を加えていません。
+この前回記録の時点ではGitHub CIは未実施でした。Nodeを明示する前の依存インストールは環境のnpm cache権限で一度失敗し、作業専用cacheと明示したNodeで再実行して成功しました。API本体や価格・契約には変更を加えていません。
+
+行対応修正後は、Node 22.23.3 / 24.13.0（ともにnpm 11.15.0）で `npm ci`・typecheck・36/36テスト・demoが成功しました。件数・行番号・送信した名称の対応を検証し、内部表記を独自に正規化せず、正しい重複入力も受け付けます。今回のテストは合成レスポンスで実行し、実Bango APIには接続していません。コミットごとのCI結果は[PR #4](https://github.com/taku1211/bango-api-examples/pull/4)のChecksと実行記録で確認できます。
+
+### 実APIの手動E2E（未実施）
+
+この手動E2Eは未実施・未検証です。今回、watch/endpointの変更・test・resume、課金、顧客データへのアクセス、外部への投稿は行っていません。既存の実API記録はバッチ名寄せPOST（ジョブ作成・利用枠消費）と読み取り照会・checkpoint取得までで、通常eventの受信やPull同期を証明しません。
+
+このリポジトリだけではE2Eを完了できません。`live:read` はバッチ名寄せ等とcheckpoint取得を行いますが、cursorを次回用に保存せず、watchやendpointも管理しません。`demo` の受信先はloopback上の一時HTTPサーバーと合成鍵です。実行には、raw bodyの署名検証と永続inboxを備えた、利用者が用意・運用する公開HTTPS受信先、およびcheckpointを保存してincremental Pullとgap回復を行うconsumerが必要です。どちらかが未準備ならそこで停止してください。
+
+開始前に、組織ownerが専用の検証組織、対象となる公開法人1社と識別子、受信HTTPS URLとevent type、1回の `endpoint.test`、Pullの利用枠消費、後述の停止・削除対象を明示的に承認してください。組織は自分が管理し、他の利用者や並行操作者がいない状態にします。既存のwatchまたはendpointがある、所有者を確認できない、利用枠が不明、対象が顧客データ、または実データ変更を意図的に起こす必要がある場合は停止します。プラン変更・顧客データの投入・公表データの改変はこの手順に含めません。
+
+1. **名寄せと対象確定:** 必要なら上記の `live:read` で公開会社名を1件だけ照合します。バッチ名寄せはPOSTで利用枠を消費します。結果が `confident` でない場合、または法人番号を公開情報と照合できない場合は停止し、review候補を自動確定しません。1社につき法人番号または対応するT番号のどちらか一つを使い、対象名・選んだ識別子・開始時点のwatch/endpoint状態を記録します。
+2. **checkpointを先に保存:** APIキーで `GET /v1/change-events?mode=incremental&start=now` を実行し、返る `next_cursor` を秘密情報として安全に保存します。これはwatch登録より先です。`start=now` は呼び出し時点の末尾を示すため、後から取得するとその間の変更を飛ばすおそれがあります。Pullは月間APIコールを消費し、history cursorはcheckpointに使えません。
+3. **watchとbaseline:** 選んだ一つの識別子で `PUT /v1/watch-targets/{identifier}` を実行します（request bodyなし）。返った現在のfull baselineと `subject.version` を自社の検証DBに保存します。同じ対象へのPUTは冪等で、既存のactive watchを返すことがあります。法人番号とT番号を混在させた重複PUT、並行操作、応答timeoutのいずれからも、この実行がwatchを新規作成したとは判断できません。200応答も新規所有の証明ではありません。timeout時にPUTを自動再送・DELETEせず、ownerが一覧・状態と事前記録を照合して判断します。
+4. **HTTPS endpointとtest:** 受信実装を先に公開HTTPSで稼働させます。owner/adminはログイン利用者の `Authorization: Bearer <JWT>` で管理します。APIキーとは別の認証です。[変更監視画面](https://bango-api.jp/dashboard/change-monitoring)でendpointを作成すると直ちにactiveになります。作成時に一度だけ返るsecretを受信側へ設定し、続けて署名付き `endpoint.test` を一度送ります。作成からsecret設定までに通常eventが届く可能性があるため、先に保存したcheckpointから後でPull補完します。raw bodyの署名検証と受信応答、およびDashboard/API結果の `success=true` を確認してください。HTTP 200だけでは成功と判定しません。安全でない宛先と判定されるとendpointがdisabledになる場合があるため、承認済みの自分のURLだけを設定します。testは通常eventとは別で業務snapshotを更新しません。test結果が失敗なら通常eventを待たず停止し、ownerが状態を確認します。
+5. **通常の公表変更を待つ:** 実在する公表変更を待ち、変更を作る目的で公表データや顧客DBを編集しません。署名付き通常イベントが届いたら、署名検証後にevent IDで重複排除し、COMMIT後に2xxを返したこと、full snapshotをversion比較して適用したことを確認します。実際の公表変更が観測されなければ、この受信経路は未検証です。`endpoint.test` 成功を通常eventの受信証明に数えません。
+6. **Pull補完と410回復:** 保存済みcursorで `GET /v1/change-events?mode=incremental&cursor=<saved>` を実行し、Webhookと同じevent IDが重複しても業務副作用が一度だけであること、inbox処理と `next_cursor` 保存が原子的であることを確認します。`410 CHANGE_EVENT_HISTORY_GAP` が返った場合は、まず `GET /v1/change-events?mode=incremental&start=now` で新checkpointを保存し、次に `GET /v1/watch-targets` でactive watchを列挙し、各対象の `GET /v1/watch-targets/{identifier}` でfresh baselineをversion比較により反映します。復旧時にPUTを使って停止済みwatchを再開しないでください。その間はwatch編集を止め、編集があった場合は再列挙して照合します。最後に新checkpointからincrementalを再開します。再度410ならこの順をやり直します。失効した過去eventは復元できません。実環境で410を意図的に起こす目的で古いcursorを放置せず、発生しなかった場合はgap回復を未検証と記録します。
+
+終了時はまず受信を止める必要があるかをownerが判断し、承認済みのendpointをDashboardでpauseします。pause後も送信中の試行が完了することがあるため、受信先は直ちに停止せず、その処理を確認してからendpointをdeleteします。承認済みの正確なidentifierだけを `DELETE /v1/watch-targets/{identifier}` で停止します。timeoutや作成結果不明のときに自動cleanupせず、ownerが状態を照合して削除を判断します。停止後の再開は過去eventを自動回収しません。検証キーの失効もownerが完了を確認してから行います。
+
+受入チェックリスト:
+
+- [ ] checkpointをwatchより先に保存し、baselineのversionとともに保持した。
+- [ ] 対象名・identifier一件と開始時点のwatch/endpoint状態を記録した。
+- [ ] HTTPSで `endpoint.test` の署名を検証し、結果 `success=true` を確認した。
+- [ ] 通常の公表変更を受信・永続化・重複排除した。実際の変更がなければ未検証と記録した。
+- [ ] Pull補完でcheckpointを進めた。
+- [ ] 410が実際に起きた場合は新checkpoint→fresh baseline→incrementalの順で回復した。未発生なら未検証と記録した。
+- [ ] ownerが停止・削除対象を照合してcleanupを判断した。
+- [ ] 証拠記録に日時・operationのHTTP status・event ID/version・証拠ファイルのSHA-256を残し、API key・secret・cursor・署名は除外した。
+
+一つでも実際に確かめられなかった項目は合格扱いにしません。詳細な公開契約は[変更監視・Webhookの初回導入](https://bango-api.jp/docs#change-monitoring)と[OpenAPI仕様](https://bango-api.jp/openapi.json)を参照してください。
 
 ### 制約
 
