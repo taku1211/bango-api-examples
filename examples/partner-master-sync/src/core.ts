@@ -129,7 +129,7 @@ export function applySnapshot(db: DatabaseSync, subject: Subject, current: Snaps
     db.prepare(`UPDATE partners SET subject_version=?,company_json=?,invoice_json=?
       WHERE subject_id=? AND (subject_version IS NULL OR length(subject_version) < length(?) OR
       (length(subject_version) = length(?) AND subject_version < ?))`)
-      .run(subject.version, company, invoice, subject.id, subject.version, subject.version);
+      .run(subject.version, company, invoice, subject.id, subject.version, subject.version, subject.version);
   }
   return true;
 }
