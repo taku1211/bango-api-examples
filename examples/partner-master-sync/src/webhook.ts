@@ -1,4 +1,5 @@
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
+import { isUtf8 } from 'node:buffer';
 import type { DatabaseSync } from 'node:sqlite';
 import { Webhook, WebhookVerificationError } from 'standardwebhooks';
 import { storeEvent, transaction, validEvent } from './core.ts';
@@ -30,6 +31,9 @@ function verifyWithVerifiers(
   body: Buffer,
   headers: IncomingHttpHeaders,
 ): unknown {
+  // The SDK computes the signed text after decoding a Buffer as UTF-8. Reject malformed byte
+  // sequences first so distinct raw bodies cannot normalize to the same signed string.
+  if (!isUtf8(body)) throw new WebhookVerificationError('body is not valid UTF-8');
   const signedHeaders = sdkHeaders(headers);
   for (const verifier of verifiers) {
     try {

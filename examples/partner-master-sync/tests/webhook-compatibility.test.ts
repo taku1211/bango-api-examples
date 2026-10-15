@@ -1,8 +1,10 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { isUtf8 } from 'node:buffer';
 import { InvalidWebhookBodyError, verifyBangoWebhook } from '../src/webhook.ts';
 import { WebhookVerificationError } from 'standardwebhooks';
+import { replaceUtf8ReplacementCharacterWithInvalidByte } from './fixtures/raw-body-mutations.ts';
 
 type FixtureMessage = {
   name: string;
@@ -82,10 +84,21 @@ test('signature failure, missing headers, malformed configuration, and signed in
   const tampered = Buffer.from(message.body.replace('426614174003', '426614174099'));
   assert.throws(() => verifyBangoWebhook(current, tampered, message.headers), WebhookVerificationError);
 
-  const missingSignature = { ...message.headers };
-  delete missingSignature['webhook-signature'];
-  assert.throws(() => verifyBangoWebhook(current, Buffer.from(message.body), missingSignature), WebhookVerificationError);
+  for (const name of ['webhook-id', 'webhook-timestamp', 'webhook-signature']) {
+    const missingHeader = { ...message.headers };
+    delete missingHeader[name];
+    assert.throws(() => verifyBangoWebhook(current, Buffer.from(message.body), missingHeader), WebhookVerificationError);
+  }
   assert.throws(() => verifyBangoWebhook('whsec_', Buffer.from(message.body), message.headers), /Secret can't be empty/);
   assert.throws(() => verify(current, messages.signedInvalidJson), InvalidWebhookBodyError);
   assert.throws(() => verifyBangoWebhook(previous, Buffer.from(messages.signedInvalidJson.body), messages.signedInvalidJson.headers), WebhookVerificationError);
+
+  const signedReplacementCharacter = messages.signedReplacementCharacter;
+  assert.doesNotThrow(() => verify(current, signedReplacementCharacter));
+  const malformedUtf8 = replaceUtf8ReplacementCharacterWithInvalidByte(signedReplacementCharacter.body);
+  assert.equal(isUtf8(malformedUtf8), false);
+  assert.throws(
+    () => verifyBangoWebhook(current, malformedUtf8, signedReplacementCharacter.headers),
+    WebhookVerificationError,
+  );
 });

@@ -11,6 +11,7 @@ import {
 import { createReceiver, signDemo } from '../src/webhook.ts';
 import { MockBango, DEMO_SECRET, COMPANY_NUMBER, CHANGED, LATEST, changeEvent, SUBJECT_ID } from '../src/mock.ts';
 import { pullAndRecover } from '../src/sync.ts';
+import { replaceUtf8ReplacementCharacterWithInvalidByte } from './fixtures/raw-body-mutations.ts';
 
 function base() {
   const db = openStore();
@@ -59,8 +60,19 @@ test('HTTP receiver verifies Bango fixtures, leaves endpoint.test state untouche
     const beforeTest = currentState(db);
     assert.equal((await sendFixture(webhookFixture.messages.endpointTestCurrentOnly)).status, 200);
     assert.deepEqual(currentState(db), beforeTest);
+    assert.equal((await fetch(url, { method: 'POST', body: webhookFixture.messages.endpointTestCurrentOnly.body })).status, 401);
+    assert.deepEqual(currentState(db), beforeTest);
     assert.equal((await sendFixture(webhookFixture.messages.retryAttempt1)).status, 200);
     assert.equal((await sendFixture(webhookFixture.messages.retryAttempt2)).status, 200);
+    assert.equal(rows(db, 'SELECT * FROM inbox').length, 1);
+
+    const replacement = webhookFixture.messages.signedReplacementCharacter;
+    const malformedUtf8 = replaceUtf8ReplacementCharacterWithInvalidByte(replacement.body);
+    const malformedBody = new Uint8Array(malformedUtf8);
+    const malformedResponse = await fetch(url, {
+      method: 'POST', headers: replacement.headers, body: malformedBody,
+    });
+    assert.equal(malformedResponse.status, 401);
     assert.equal(rows(db, 'SELECT * FROM inbox').length, 1);
 
     const invalid = signDemo(webhookFixture.testSecrets.current, { id: 'evt_invalid_shape', type: 'company.updated', subject: {} });
