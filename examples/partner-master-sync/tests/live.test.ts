@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   BangoApiError,
   BangoJobFailedError,
@@ -14,6 +15,13 @@ import { parseLiveCliArgs, runLiveCli } from '../src/live-cli.ts';
 const API_KEY = 'test-only-not-a-real-api-key';
 const COMPANY_NUMBER = '1234567890123';
 const REGISTRATION_NUMBER = `T${COMPANY_NUMBER}`;
+const contract = JSON.parse(readFileSync(new URL('./fixtures/live-contract.json', import.meta.url), 'utf8')) as {
+  responses: Record<string, Record<string, any>>;
+};
+
+function fixture(name: string) {
+  return structuredClone(contract.responses[name]);
+}
 
 function jsonResponse(payload: unknown, status = 200, headers?: HeadersInit): Response {
   return new Response(JSON.stringify(payload), {
@@ -22,57 +30,39 @@ function jsonResponse(payload: unknown, status = 200, headers?: HeadersInit): Re
   });
 }
 
-function envelope(data: unknown) {
-  return { object: 'example', schema_version: '2026-08', data };
+function acceptedJob(jobId: string) {
+  const response = fixture('batchAccepted');
+  response.data.job_id = jobId;
+  response.links.status = `https://api.bango-api.jp/v1/batch/${jobId}`;
+  return response;
 }
 
-function row(rowIndex: number, confidence: string, corporateNumber: string | null, candidateCount = 0) {
-  return {
-    object: 'batch_result_row',
-    row_index: rowIndex,
-    input_name: ['架空商事', '架空商事 別支店', '未一致の架空法人'][rowIndex - 1],
-    prefecture_code: null,
-    confidence,
-    score: confidence === 'confident' ? 0.99 : 0.3,
-    candidate_count: candidateCount,
-    matched_corporate_number: corporateNumber,
-    candidates: [],
-  };
+function jobStatus(jobId: string, status: 'queued' | 'processing' | 'completed' | 'failed') {
+  const response = fixture('batchStatusCompleted');
+  response.data.job_id = jobId;
+  response.data.status = status;
+  response.data.progress = { done: status === 'completed' ? 3 : 0, total: 3 };
+  response.data.summary = status === 'completed' ? { confident: 1, review: 1, unmatched: 1 } : null;
+  response.data.error = null;
+  response.links.self = `https://api.bango-api.jp/v1/batch/${jobId}`;
+  response.links.download = `${response.links.self}/download`;
+  return response;
 }
 
-function completedBatchRows() {
-  return {
-    object: 'list',
-    item: 'batch_result_row',
-    schema_version: '2026-08',
-    data: [
-      row(1, 'confident', COMPANY_NUMBER, 1),
-      row(2, 'review', null, 2),
-      row(3, 'unmatched', null, 0),
-    ],
-    has_more: false,
-    offset: 0,
-    limit: 100,
-    links: { self: 'https://api.bango-api.jp/v1/batch/job-test/download', docs: 'https://bango-api.jp/docs' },
-    meta: {},
-  };
+function batchDownload(jobId: string, count = 3) {
+  const response = fixture('batchDownload');
+  response.data = response.data.slice(0, count);
+  response.data.forEach((row: Record<string, unknown>, index: number) => { row.row_index = index + 1; });
+  response.limit = 100;
+  response.links.self = `https://api.bango-api.jp/v1/batch/${jobId}/download`;
+  return response;
 }
 
-function syntheticCompany() {
-  return envelope({
-    corporate_number: COMPANY_NUMBER,
-    name: '株式会社架空商事',
-    invoice: {
-      found: true,
-      registration_number: REGISTRATION_NUMBER,
-      registered: true,
-      registration_date: '2023-10-01',
-      cancel_date: null,
-      expire_date: null,
-      valid: true,
-      country: 'domestic',
-    },
-  });
+function reviewDownload(jobId: string) {
+  const response = batchDownload(jobId, 1);
+  response.data[0].confidence = 'review';
+  response.data[0].matched_corporate_number = null;
+  return response;
 }
 
 test('live contract posts once, polls the job, downloads 1-based rows, and only looks up confident matches', async () => {
@@ -82,39 +72,28 @@ test('live contract posts once, polls the job, downloads 1-based rows, and only 
     const url = input instanceof URL ? input : new URL(String(input));
     calls.push({ url, init });
     if (url.pathname === '/v1/batch/match') {
-      return jsonResponse(envelope({ job_id: 'job-test', status: 'queued' }), 202);
+      return jsonResponse(acceptedJob('job-test'), 202);
     }
     if (url.pathname === '/v1/batch/job-test') {
       const status = statuses.shift();
       if (status === undefined) throw new Error('unexpected extra poll');
-      return jsonResponse(envelope({
-        job_id: 'job-test', status,
-        progress: { done: status === 'completed' ? 3 : 0, total: 3 },
-        summary: status === 'completed' ? { confident: 1, review: 1, unmatched: 1 } : null,
-        error: null,
-      }));
+      return jsonResponse(jobStatus('job-test', status as 'queued' | 'processing' | 'completed'));
     }
-    if (url.pathname === '/v1/batch/job-test/download') return jsonResponse(completedBatchRows());
-    if (url.pathname === `/v1/companies/${COMPANY_NUMBER}`) return jsonResponse(syntheticCompany());
-    if (url.pathname === `/v1/invoice/${REGISTRATION_NUMBER}/valid`) {
-      return jsonResponse(envelope({
-        registration_number: REGISTRATION_NUMBER,
-        date: '2024-10-01',
-        valid: true,
-        registration_date: '2023-10-01',
-        cancel_date: null,
-        expire_date: null,
-      }));
-    }
+    if (url.pathname === '/v1/batch/job-test/download') return jsonResponse(batchDownload('job-test'));
+    if (url.pathname === `/v1/companies/${COMPANY_NUMBER}`) return jsonResponse(fixture('company'));
+    if (url.pathname === `/v1/invoice/${REGISTRATION_NUMBER}/valid`) return jsonResponse(fixture('invoiceValidity'));
+    if (url.pathname === '/v1/change-events') return jsonResponse(fixture('incrementalStartNow'));
     throw new Error(`unexpected URL ${url.pathname}`);
   };
 
   const api = new LiveBango(API_KEY, { fetch, sleep: async () => {} });
-  const result = await api.run([' 架空商事 ', '架空商事 別支店', '未一致の架空法人'], '2024-10-01');
+  const result = await api.run([' 株式会社架空商事 ', '架空商事 別支店', '未一致の架空法人'], '2024-10-01');
 
-  assert.equal(result.callsMade, 7);
+  assert.equal(result.callsMade, 8);
   assert.equal(result.simulation, false);
-  assert.equal(api.callsMade, 7);
+  assert.equal(result.checkpointAcquired, true);
+  assert.equal(api.callsMade, 8);
+  assert.equal(Object.hasOwn(result, 'next_cursor'), false);
   assert.deepEqual(result.partners.map(partner => partner.confidence), ['confident', 'review', 'unmatched']);
   assert.equal(result.partners[0].linkedCorporateNumber, COMPANY_NUMBER);
   assert.equal(result.partners[0].invoiceValidity?.date, '2024-10-01');
@@ -125,16 +104,69 @@ test('live contract posts once, polls the job, downloads 1-based rows, and only 
   assert.equal(calls.filter(call => call.url.pathname.startsWith('/v1/companies/')).length, 1);
   assert.equal(calls.filter(call => call.url.pathname.startsWith('/v1/invoice/')).length, 1);
   assert.deepEqual(JSON.parse(String(calls[0].init.body)), {
-    companies: ['架空商事', '架空商事 別支店', '未一致の架空法人'],
+    companies: ['株式会社架空商事', '架空商事 別支店', '未一致の架空法人'],
   });
   assert.equal(calls[4].url.searchParams.get('format'), 'json');
   assert.equal(calls[4].url.searchParams.get('offset'), '0');
   assert.equal(calls[4].url.searchParams.get('limit'), '100');
   assert.equal(calls[6].url.searchParams.get('date'), '2024-10-01');
+  assert.equal(calls[7].url.pathname, '/v1/change-events');
+  assert.equal(calls[7].url.searchParams.get('mode'), 'incremental');
+  assert.equal(calls[7].url.searchParams.get('start'), 'now');
   for (const call of calls) {
     assert.equal(call.url.origin, 'https://api.bango-api.jp');
     assert.equal((call.init.headers as Record<string, string>)['x-api-key'], API_KEY);
     assert.equal(call.init.redirect, 'error');
+  }
+});
+
+test('history response cannot be used as an incremental checkpoint', async () => {
+  const fetch = async (input: URL | RequestInfo) => {
+    const url = input instanceof URL ? input : new URL(String(input));
+    if (url.pathname === '/v1/batch/match') return jsonResponse(acceptedJob('job-history'), 202);
+    if (url.pathname === '/v1/batch/job-history') return jsonResponse(jobStatus('job-history', 'completed'));
+    if (url.pathname === '/v1/batch/job-history/download') return jsonResponse(reviewDownload('job-history'));
+    const historyPage = fixture('incrementalStartNow');
+    historyPage.mode = 'history';
+    historyPage.continuity_guaranteed = false;
+    return jsonResponse(historyPage);
+  };
+  const api = new LiveBango(API_KEY, { fetch, sleep: async () => {} });
+
+  await assert.rejects(api.run(['架空商事'], '2024-10-01'), BangoProtocolError);
+  assert.equal(api.callsMade, 4);
+});
+
+test('incremental checkpoint Problem statuses are surfaced safely without retry', async () => {
+  for (const status of [410, 401, 403, 429, 503]) {
+    const problem = fixture('changeEventProblems')[String(status)];
+    let posts = 0;
+    let checkpointCalls = 0;
+    const fetch = async (input: URL | RequestInfo) => {
+      const url = input instanceof URL ? input : new URL(String(input));
+      if (url.pathname === '/v1/batch/match') {
+        posts += 1;
+        return jsonResponse(acceptedJob('job-problem'), 202);
+      }
+      if (url.pathname === '/v1/batch/job-problem') return jsonResponse(jobStatus('job-problem', 'completed'));
+      if (url.pathname === '/v1/batch/job-problem/download') return jsonResponse(reviewDownload('job-problem'));
+      checkpointCalls += 1;
+      return jsonResponse(problem, status);
+    };
+    const api = new LiveBango(API_KEY, { fetch, sleep: async () => {} });
+
+    await assert.rejects(api.run(['架空商事'], '2024-10-01'), error => {
+      assert.ok(error instanceof BangoApiError);
+      assert.deepEqual(error.problem, {
+        status,
+        code: problem.code,
+        retryAfterSeconds: problem.retry_after,
+      });
+      return true;
+    });
+    assert.equal(posts, 1);
+    assert.equal(checkpointCalls, 1);
+    assert.equal(api.callsMade, 4);
   }
 });
 
@@ -143,10 +175,8 @@ test('bounded polling times out without resubmitting the quota-consuming POST', 
   const fetch = async (input: URL | RequestInfo) => {
     const url = input instanceof URL ? input : new URL(String(input));
     requests.push(url.pathname);
-    if (url.pathname === '/v1/batch/match') return jsonResponse(envelope({ job_id: 'job-pending', status: 'queued' }), 202);
-    return jsonResponse(envelope({
-      job_id: 'job-pending', status: 'processing', progress: { done: 0, total: 1 }, summary: null, error: null,
-    }));
+    if (url.pathname === '/v1/batch/match') return jsonResponse(acceptedJob('job-pending'), 202);
+    return jsonResponse(jobStatus('job-pending', 'processing'));
   };
   const api = new LiveBango(API_KEY, { fetch, maxPolls: 2, pollIntervalMs: 0, sleep: async () => {} });
 
@@ -162,12 +192,11 @@ test('failed jobs expose only safe error fields and are never resubmitted', asyn
     const url = input instanceof URL ? input : new URL(String(input));
     if (url.pathname === '/v1/batch/match') {
       posts += 1;
-      return jsonResponse(envelope({ job_id: 'job-failed', status: 'queued' }), 202);
+      return jsonResponse(acceptedJob('job-failed'), 202);
     }
-    return jsonResponse(envelope({
-      job_id: 'job-failed', status: 'failed', progress: { done: 1, total: 1 }, summary: null,
-      error: { code: 'SOURCE_UNAVAILABLE', message: API_KEY, retryable: false, retry_after: 12 },
-    }));
+    const failed = jobStatus('job-failed', 'failed');
+    failed.data.error = { code: 'SOURCE_UNAVAILABLE', message: API_KEY, retryable: false, retry_after: 12 };
+    return jsonResponse(failed);
   };
   const api = new LiveBango(API_KEY, { fetch, sleep: async () => {} });
 
@@ -207,14 +236,11 @@ test('a download row with zero-based or misordered row_index fails closed before
   const fetch = async (input: URL | RequestInfo) => {
     const url = input instanceof URL ? input : new URL(String(input));
     paths.push(url.pathname);
-    if (url.pathname === '/v1/batch/match') return jsonResponse(envelope({ job_id: 'job-test', status: 'queued' }), 202);
-    if (url.pathname === '/v1/batch/job-test') {
-      return jsonResponse(envelope({
-        job_id: 'job-test', status: 'completed', progress: { done: 1, total: 1 },
-        summary: { confident: 1, review: 0, unmatched: 0 }, error: null,
-      }));
-    }
-    return jsonResponse({ ...completedBatchRows(), data: [row(0, 'confident', COMPANY_NUMBER, 1)] });
+    if (url.pathname === '/v1/batch/match') return jsonResponse(acceptedJob('job-test'), 202);
+    if (url.pathname === '/v1/batch/job-test') return jsonResponse(jobStatus('job-test', 'completed'));
+    const malformed = batchDownload('job-test', 1);
+    malformed.data[0].row_index = 0;
+    return jsonResponse(malformed);
   };
   const api = new LiveBango(API_KEY, { fetch, sleep: async () => {} });
 

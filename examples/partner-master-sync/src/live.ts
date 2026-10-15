@@ -29,6 +29,7 @@ type LiveReadResult = {
   mode: 'live-read';
   simulation: false;
   asOfDate: string;
+  checkpointAcquired: true;
   callsMade: number;
   partners: LivePartnerResult[];
 };
@@ -255,6 +256,15 @@ export class LiveBango {
     return rows;
   }
 
+  private async acquireCheckpoint(): Promise<void> {
+    const page = await this.request('change-events?mode=incremental&start=now');
+    if (!isObject(page) || page.mode !== 'incremental' || page.continuity_guaranteed !== true ||
+        !Array.isArray(page.data) || page.data.length !== 0 || page.has_more !== false ||
+        typeof page.next_cursor !== 'string' || page.next_cursor.length === 0) {
+      throw new BangoProtocolError('BANGO API did not return an empty incremental start=now checkpoint.');
+    }
+  }
+
   async run(namesInput: string[], asOfDateInput: string): Promise<LiveReadResult> {
     const names = validateCompanyNames(namesInput);
     const asOfDate = validateAsOfDate(asOfDateInput);
@@ -304,6 +314,7 @@ export class LiveBango {
       });
     }
 
-    return { mode: 'live-read', simulation: false, asOfDate, callsMade: this.callsMade, partners };
+    await this.acquireCheckpoint();
+    return { mode: 'live-read', simulation: false, asOfDate, checkpointAcquired: true, callsMade: this.callsMade, partners };
   }
 }
